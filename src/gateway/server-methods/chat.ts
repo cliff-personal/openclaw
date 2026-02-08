@@ -413,10 +413,6 @@ export const chatHandlers: GatewayRequestHandlers = {
       overrideMs: p.timeoutMs,
     });
 
-    context.logGateway.debug(
-      `chat.send start sessionKey=${p.sessionKey} runId=${clientRunId} chars=${rawMessage.length} attachments=${normalizedAttachments.length} deliver=${p.deliver !== false}`,
-    );
-
     const sendPolicy = resolveSendPolicy({
       cfg,
       entry,
@@ -481,6 +477,10 @@ export const chatHandlers: GatewayRequestHandlers = {
       );
       return;
     }
+
+    context.logGateway.debug(
+      `chat.send start sessionKey=${p.sessionKey} runId=${clientRunId} chars=${rawMessage.length} attachments=${normalizedAttachments.length} deliver=${p.deliver !== false}`,
+    );
 
     try {
       // Ensure the session exists and is updated before we start.

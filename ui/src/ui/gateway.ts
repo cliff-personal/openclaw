@@ -94,7 +94,18 @@ export class GatewayBrowserClient {
     if (this.closed) {
       return;
     }
-    this.ws = new WebSocket(this.opts.url);
+    try {
+      this.ws = new WebSocket(this.opts.url);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.ws = null;
+      this.flushPending(new Error(`gateway connect failed: ${message}`));
+      this.opts.onClose?.({
+        code: CONNECT_FAILED_CLOSE_CODE,
+        reason: `invalid gateway url: ${this.opts.url}`,
+      });
+      return;
+    }
     this.ws.addEventListener("open", () => this.queueConnect());
     this.ws.addEventListener("message", (ev) => this.handleMessage(String(ev.data ?? "")));
     this.ws.addEventListener("close", (ev) => {

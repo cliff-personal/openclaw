@@ -2,18 +2,54 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "OpenClaw: Gateway (debug, 18789)",
+      "name": "OpenClaw: Gateway (TSX debug, 18789)",
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder:openclaw}",
-      "program": "${workspaceFolder:openclaw}/openclaw.mjs",
+      "env": {
+        "OPENCLAW_NO_RESPAWN": "1"
+      },
+      "program": "${workspaceFolder:openclaw}/src/entry.ts",
       "args": ["gateway", "--port", "18789", "--force", "--verbose"],
-      "runtimeArgs": ["--enable-source-maps"],
-      "preLaunchTask": "OpenClaw: build (tsdown)",
+      "runtimeArgs": ["--enable-source-maps", "--import", "tsx"],
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"],
-      "resolveSourceMapLocations": ["${workspaceFolder:openclaw}/**", "!**/node_modules/**"],
-      "outFiles": ["${workspaceFolder:openclaw}/dist/**/*.js"]
+      "resolveSourceMapLocations": [
+        "${workspaceFolder:openclaw}/src/**",
+        "${workspaceFolder:openclaw}/ui/**",
+        "!**/node_modules/**"
+      ]
+    },
+    {
+      "name": "OpenClaw: Gateway (TSX debug, isolated, 18790)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder:openclaw}",
+      "env": {
+        "OPENCLAW_NO_RESPAWN": "1",
+        "OPENCLAW_CONFIG_PATH": "${workspaceFolder:openclaw}/.tmp/vscode-gateway/openclaw.json",
+        "OPENCLAW_STATE_DIR": "${workspaceFolder:openclaw}/.tmp/vscode-gateway/state",
+        "HOME": "${workspaceFolder:openclaw}/.tmp/vscode-gateway/home"
+      },
+      "program": "${workspaceFolder:openclaw}/src/entry.ts",
+      "args": [
+        "gateway",
+        "--port",
+        "18790",
+        "--bind",
+        "loopback",
+        "--dev",
+        "--allow-unconfigured",
+        "--verbose"
+      ],
+      "runtimeArgs": ["--enable-source-maps", "--import", "tsx"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "resolveSourceMapLocations": [
+        "${workspaceFolder:openclaw}/src/**",
+        "${workspaceFolder:openclaw}/ui/**",
+        "!**/node_modules/**"
+      ]
     },
     {
       "name": "OpenClaw: Control UI (Chrome, 5173)",

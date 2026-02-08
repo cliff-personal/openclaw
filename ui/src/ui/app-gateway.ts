@@ -26,6 +26,7 @@ import {
 } from "./controllers/exec-approval.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadSessions } from "./controllers/sessions.ts";
+import { normalizeGatewayWsUrl } from "./gateway-url.ts";
 import { GatewayBrowserClient } from "./gateway.ts";
 
 type GatewayHost = {
@@ -124,7 +125,7 @@ export function connectGateway(host: GatewayHost) {
 
   host.client?.stop();
   host.client = new GatewayBrowserClient({
-    url: host.settings.gatewayUrl,
+    url: normalizeGatewayWsUrl(host.settings.gatewayUrl),
     token: host.settings.token.trim() ? host.settings.token : undefined,
     password: host.password.trim() ? host.password : undefined,
     clientName: "openclaw-control-ui",

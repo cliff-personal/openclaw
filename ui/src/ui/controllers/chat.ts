@@ -46,6 +46,7 @@ async function pollChatRunStatus(params: {
         sessionKey,
         message,
         idempotencyKey: runId,
+        deliver: false,
         attachments,
         timeoutMs: 30_000,
       });

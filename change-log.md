@@ -34,3 +34,18 @@ Date: 2026-02-08
 
 - Backend: `src/gateway/server-methods/chat.ts`
 - UI: `ui/src/ui/controllers/chat.ts`, `ui/src/ui/app-gateway.ts`
+
+## Additional changes
+
+- Control UI: normalize the configured gateway URL (accept `http(s)://`, `ws(s)://`, or bare `host:port`) to reduce accidental `1006` disconnects from invalid URLs.
+- Control UI: in dev mode, default the gateway URL to `ws://127.0.0.1:18789` to avoid accidentally pointing at the Vite server.
+- Control UI: make `chat.send` watchdog polling use `deliver:false` to avoid double-delivery/noise while still extending deadlines via `expiresAtMs`.
+- Control UI: guard WebSocket construction so invalid gateway URLs surface a clear “connect failed” error instead of a confusing reconnect loop.
+- Dev tooling: add an **isolated** TSX gateway debug launch target on port `18790` with separate config/state dirs, so debugging doesn’t kill or replace the primary gateway.
+- Compat: add `src/tool-call-id.ts` re-export for path compatibility.
+
+## Files changed (additional)
+
+- Dev: `.vscode/launch.json`
+- Backend: `src/tool-call-id.ts`
+- UI: `ui/src/ui/gateway-url.ts`, `ui/src/ui/gateway-url.test.ts`, `ui/src/ui/gateway.ts`, `ui/src/ui/storage.ts`
