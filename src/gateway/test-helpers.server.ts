@@ -254,9 +254,20 @@ export async function occupyPort(): Promise<{
   });
 }
 
-export function onceMessage<T = unknown>(
+export type GatewayWsMessage = {
+  type?: string;
+  id?: string;
+  ok?: boolean;
+  method?: string;
+  event?: string;
+  payload?: Record<string, unknown>;
+  error?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export function onceMessage<T = GatewayWsMessage>(
   ws: WebSocket,
-  filter: (obj: unknown) => boolean,
+  filter: (obj: GatewayWsMessage) => boolean,
   // Full-suite runs can saturate the event loop (581+ files). Keep this high
   // enough to avoid flaky RPC timeouts, but still fail fast when a response
   // never arrives.
@@ -270,7 +281,7 @@ export function onceMessage<T = unknown>(
       reject(new Error(`closed ${code}: ${reason.toString()}`));
     };
     const handler = (data: WebSocket.RawData) => {
-      const obj = JSON.parse(rawDataToString(data));
+      const obj = JSON.parse(rawDataToString(data)) as GatewayWsMessage;
       if (filter(obj)) {
         clearTimeout(timer);
         ws.off("message", handler);
@@ -484,7 +495,7 @@ export async function connectOk(ws: WebSocket, opts?: Parameters<typeof connectR
   return res.payload as { type: "hello-ok" };
 }
 
-export async function rpcReq<T = unknown>(
+export async function rpcReq<T = Record<string, unknown>>(
   ws: WebSocket,
   method: string,
   params?: unknown,

@@ -8,7 +8,6 @@ import { resetToolStream } from "./app-tool-stream.ts";
 import { abortChatRun, loadChatHistory, sendChatMessage } from "./controllers/chat.ts";
 import { loadSessions } from "./controllers/sessions.ts";
 import { normalizeBasePath } from "./navigation.ts";
-import { generateUUID } from "./uuid.ts";
 
 export type ChatHost = {
   connected: boolean;
@@ -17,6 +16,9 @@ export type ChatHost = {
   chatQueue: ChatQueueItem[];
   chatRunId: string | null;
   chatSending: boolean;
+  chatInputHistory?: string[];
+  chatInputHistoryIndex?: number | null;
+  chatInputHistoryDraft?: string | null;
   sessionKey: string;
   basePath: string;
   hello: GatewayHelloOk | null;
@@ -66,29 +68,6 @@ export async function handleAbortChat(host: ChatHost) {
   }
   host.chatMessage = "";
   await abortChatRun(host as unknown as OpenClawApp);
-}
-
-function enqueueChatMessage(
-  host: ChatHost,
-  text: string,
-  attachments?: ChatAttachment[],
-  refreshSessions?: boolean,
-) {
-  const trimmed = text.trim();
-  const hasAttachments = Boolean(attachments && attachments.length > 0);
-  if (!trimmed && !hasAttachments) {
-    return;
-  }
-  host.chatQueue = [
-    ...host.chatQueue,
-    {
-      id: generateUUID(),
-      text: trimmed,
-      createdAt: Date.now(),
-      attachments: hasAttachments ? attachments?.map((att) => ({ ...att })) : undefined,
-      refreshSessions,
-    },
-  ];
 }
 
 async function sendChatMessageNow(
@@ -164,6 +143,7 @@ export async function handleSendChat(
   if (!host.connected) {
     return;
   }
+
   const previousDraft = host.chatMessage;
   const message = (messageOverride ?? host.chatMessage).trim();
   const attachments = host.chatAttachments ?? [];
@@ -183,16 +163,16 @@ export async function handleSendChat(
   const refreshSessions = isChatResetCommand(message);
   if (messageOverride == null) {
     host.chatMessage = "";
-    // Clear attachments when sending
     host.chatAttachments = [];
   }
 
   if (isChatBusy(host)) {
-    enqueueChatMessage(host, message, attachmentsToSend, refreshSessions);
+    // While a run is in progress, sending is disabled by UI.
+    // Keep this guard to avoid accidentally queuing messages from other call sites.
     return;
   }
 
-  await sendChatMessageNow(host, message, {
+  const ok = await sendChatMessageNow(host, message, {
     previousDraft: messageOverride == null ? previousDraft : undefined,
     restoreDraft: Boolean(messageOverride && opts?.restoreDraft),
     attachments: hasAttachments ? attachmentsToSend : undefined,
@@ -200,6 +180,116 @@ export async function handleSendChat(
     restoreAttachments: Boolean(messageOverride && opts?.restoreDraft),
     refreshSessions,
   });
+
+  if (ok && message && !refreshSessions && !isChatStopCommand(message)) {
+    recordChatInputHistory(host, message);
+  }
+}
+
+const CHAT_INPUT_HISTORY_STORAGE_KEY = "openclaw.chat.inputHistory.v1";
+const CHAT_INPUT_HISTORY_MAX_ENTRIES = 50;
+
+function loadChatInputHistoryFromStorage(): string[] {
+  if (globalThis.window === undefined) {
+    return [];
+  }
+  try {
+    const raw = globalThis.localStorage.getItem(CHAT_INPUT_HISTORY_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .slice(-CHAT_INPUT_HISTORY_MAX_ENTRIES);
+  } catch {
+    return [];
+  }
+}
+
+function saveChatInputHistoryToStorage(entries: string[]) {
+  if (globalThis.window === undefined) {
+    return;
+  }
+  try {
+    globalThis.localStorage.setItem(CHAT_INPUT_HISTORY_STORAGE_KEY, JSON.stringify(entries));
+  } catch {
+    // ignore
+  }
+}
+
+function ensureChatInputHistory(host: ChatHost) {
+  host.chatInputHistory ??= loadChatInputHistoryFromStorage();
+  if (host.chatInputHistoryIndex === undefined) {
+    host.chatInputHistoryIndex = null;
+  }
+  if (host.chatInputHistoryDraft === undefined) {
+    host.chatInputHistoryDraft = null;
+  }
+}
+
+export function resetChatInputHistoryNavigation(host: ChatHost) {
+  ensureChatInputHistory(host);
+  host.chatInputHistoryIndex = null;
+  host.chatInputHistoryDraft = null;
+}
+
+export function handleChatInputHistoryNavigate(host: ChatHost, direction: "up" | "down") {
+  ensureChatInputHistory(host);
+
+  const entries = host.chatInputHistory ?? [];
+  if (entries.length === 0) {
+    return;
+  }
+
+  const index = host.chatInputHistoryIndex;
+
+  if (direction === "up") {
+    if (index == null) {
+      host.chatInputHistoryDraft = host.chatMessage;
+      host.chatInputHistoryIndex = entries.length - 1;
+    } else if (index > 0) {
+      host.chatInputHistoryIndex = index - 1;
+    }
+  } else {
+    if (index == null) {
+      return;
+    }
+    if (index < entries.length - 1) {
+      host.chatInputHistoryIndex = index + 1;
+    } else {
+      host.chatInputHistoryIndex = null;
+      host.chatMessage = host.chatInputHistoryDraft ?? "";
+      host.chatInputHistoryDraft = null;
+      return;
+    }
+  }
+
+  const nextIndex = host.chatInputHistoryIndex;
+  if (nextIndex == null) {
+    return;
+  }
+  host.chatMessage = entries[nextIndex] ?? host.chatMessage;
+}
+
+function recordChatInputHistory(host: ChatHost, text: string) {
+  ensureChatInputHistory(host);
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return;
+  }
+  const current = host.chatInputHistory ?? [];
+  const withoutDupes = current.filter((entry) => entry !== trimmed);
+  const next = [...withoutDupes, trimmed].slice(-CHAT_INPUT_HISTORY_MAX_ENTRIES);
+  host.chatInputHistory = next;
+  saveChatInputHistoryToStorage(next);
+  host.chatInputHistoryIndex = null;
+  host.chatInputHistoryDraft = null;
 }
 
 export async function refreshChat(host: ChatHost) {

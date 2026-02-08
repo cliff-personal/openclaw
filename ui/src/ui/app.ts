@@ -44,8 +44,10 @@ import {
 } from "./app-channels.ts";
 import {
   handleAbortChat as handleAbortChatInternal,
+  handleChatInputHistoryNavigate as handleChatInputHistoryNavigateInternal,
   handleSendChat as handleSendChatInternal,
   removeQueuedMessage as removeQueuedMessageInternal,
+  resetChatInputHistoryNavigation as resetChatInputHistoryNavigationInternal,
 } from "./app-chat.ts";
 import { DEFAULT_CRON_FORM, DEFAULT_LOG_LEVEL_FILTERS } from "./app-defaults.ts";
 import { connectGateway as connectGatewayInternal } from "./app-gateway.ts";
@@ -429,6 +431,20 @@ export class OpenClawApp extends LitElement {
 
   async handleAbortChat() {
     await handleAbortChatInternal(this as unknown as Parameters<typeof handleAbortChatInternal>[0]);
+  }
+
+  setChatMessage(next: string) {
+    resetChatInputHistoryNavigationInternal(
+      this as unknown as Parameters<typeof resetChatInputHistoryNavigationInternal>[0],
+    );
+    this.chatMessage = next;
+  }
+
+  handleChatInputHistoryNavigate(direction: "up" | "down") {
+    handleChatInputHistoryNavigateInternal(
+      this as unknown as Parameters<typeof handleChatInputHistoryNavigateInternal>[0],
+      direction,
+    );
   }
 
   removeQueuedMessage(id: string) {

@@ -41,6 +41,7 @@ function createProps(overrides: Partial<ChatProps> = {}): ChatProps {
     onRefresh: () => undefined,
     onToggleFocusMode: () => undefined,
     onDraftChange: () => undefined,
+    onDraftHistoryNavigate: () => undefined,
     onSend: () => undefined,
     onQueueRemove: () => undefined,
     onNewSession: () => undefined,

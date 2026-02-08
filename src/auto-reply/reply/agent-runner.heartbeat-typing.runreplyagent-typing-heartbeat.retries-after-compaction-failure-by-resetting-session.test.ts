@@ -53,11 +53,13 @@ function createMinimalRun(params?: {
   storePath?: string;
   typingMode?: TypingMode;
   blockStreamingEnabled?: boolean;
+  messageProvider?: string;
+  sessionCtxProvider?: string;
 }) {
   const typing = createMockTypingController();
   const opts = params?.opts;
   const sessionCtx = {
-    Provider: "whatsapp",
+    Provider: params?.sessionCtxProvider ?? "whatsapp",
     MessageSid: "msg",
   } as unknown as TemplateContext;
   const resolvedQueue = { mode: "interrupt" } as unknown as QueueSettings;
@@ -69,7 +71,7 @@ function createMinimalRun(params?: {
     run: {
       sessionId: "session",
       sessionKey,
-      messageProvider: "whatsapp",
+      messageProvider: params?.messageProvider ?? "whatsapp",
       sessionFile: "/tmp/session.jsonl",
       workspaceDir: "/tmp",
       config: {},
@@ -215,6 +217,66 @@ describe("runReplyAgent typing (heartbeat)", () => {
         text: expect.stringContaining("Context limit exceeded"),
       });
       expect(payload.text?.toLowerCase()).toContain("reset");
+      expect(sessionStore.main.sessionId).not.toBe(sessionId);
+
+      const persisted = JSON.parse(await fs.readFile(storePath, "utf-8"));
+      expect(persisted.main.sessionId).toBe(sessionStore.main.sessionId);
+    } finally {
+      if (prevStateDir) {
+        process.env.OPENCLAW_STATE_DIR = prevStateDir;
+      } else {
+        delete process.env.OPENCLAW_STATE_DIR;
+      }
+    }
+  });
+
+  it("auto-retries after context overflow in webchat by resetting the session", async () => {
+    const prevStateDir = process.env.OPENCLAW_STATE_DIR;
+    const stateDir = await fs.mkdtemp(path.join(tmpdir(), "openclaw-session-webchat-overflow-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    try {
+      const sessionId = "session";
+      const storePath = path.join(stateDir, "sessions", "sessions.json");
+      const transcriptPath = sessions.resolveSessionTranscriptPath(sessionId);
+      const sessionEntry = { sessionId, updatedAt: Date.now(), sessionFile: transcriptPath };
+      const sessionStore = { main: sessionEntry };
+
+      await fs.mkdir(path.dirname(storePath), { recursive: true });
+      await fs.writeFile(storePath, JSON.stringify(sessionStore), "utf-8");
+      await fs.mkdir(path.dirname(transcriptPath), { recursive: true });
+      await fs.writeFile(transcriptPath, "ok", "utf-8");
+
+      runEmbeddedPiAgentMock
+        .mockImplementationOnce(async () => ({
+          payloads: [{ text: "Context overflow: prompt too large", isError: true }],
+          meta: {
+            durationMs: 1,
+            error: {
+              kind: "context_overflow",
+              message: "400 request exceeds the available context size (16384 tokens)",
+            },
+          },
+        }))
+        .mockImplementationOnce(async () => ({
+          payloads: [{ text: "ok", isError: false }],
+          meta: { durationMs: 1 },
+        }));
+
+      const { run } = createMinimalRun({
+        sessionEntry,
+        sessionStore,
+        sessionKey: "main",
+        storePath,
+        messageProvider: "webchat",
+        sessionCtxProvider: "webchat",
+      });
+      const res = await run();
+
+      expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(2);
+      const payload = Array.isArray(res) ? res[0] : res;
+      expect(payload).toMatchObject({
+        text: expect.stringContaining("ok"),
+      });
       expect(sessionStore.main.sessionId).not.toBe(sessionId);
 
       const persisted = JSON.parse(await fs.readFile(storePath, "utf-8"));

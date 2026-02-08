@@ -82,6 +82,19 @@ turn that reminds the model to write durable notes to disk. This only runs when
 the workspace is writable. See [Memory](/concepts/memory) and
 [Compaction](/concepts/compaction).
 
+## Context overflow recovery (WebChat)
+
+If a model call fails because the request exceeds the model’s context window (for example, llama-server errors like “exceeds the available context size”), OpenClaw will try to recover:
+
+- First it may attempt auto-compaction (when applicable).
+- If the run still can’t proceed, OpenClaw starts a fresh session id for the same `sessionKey`.
+- In **WebChat** (Control UI), OpenClaw then automatically retries your message in the new session.
+
+Notes:
+
+- Retries are capped to avoid infinite loops. If your _single_ message is too large even for an empty session, the retry will still fail — shorten the input or switch to a larger-context model.
+- Other channels may reset the session but still ask you to re-send, depending on delivery constraints.
+
 ## Mapping transports → session keys
 
 - Direct chats follow `session.dmScope` (default `main`).

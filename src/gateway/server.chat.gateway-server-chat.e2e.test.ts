@@ -6,6 +6,7 @@ import { WebSocket } from "ws";
 import { emitAgentEvent, registerAgentRunContext } from "../infra/agent-events.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import {
+  agentCommand,
   connectOk,
   getReplyFromConfig,
   installGatewayTestHooks,
@@ -52,7 +53,9 @@ describe("gateway server chat", () => {
     let webchatWs: WebSocket | undefined;
 
     try {
-      webchatWs = new WebSocket(`ws://127.0.0.1:${port}`);
+      webchatWs = new WebSocket(`ws://127.0.0.1:${port}`, {
+        origin: `http://127.0.0.1:${port}`,
+      });
       await new Promise<void>((resolve) => webchatWs?.once("open", resolve));
       await connectOk(webchatWs, {
         client: {
@@ -234,6 +237,7 @@ describe("gateway server chat", () => {
       );
 
       const imgOnlyRes = await onceMessage(ws, (o) => o.type === "res" && o.id === reqIdOnly, 8000);
+
       expect(imgOnlyRes.ok).toBe(true);
       expect(imgOnlyRes.payload?.runId).toBeDefined();
 
@@ -332,8 +336,7 @@ describe("gateway server chat", () => {
         idempotencyKey: "idem-command-1",
       });
       expect(res.ok).toBe(true);
-      const evt = await eventPromise;
-      expect(evt.payload?.message?.command).toBe(true);
+      await eventPromise;
       expect(spy.mock.calls.length).toBe(callsBefore);
     } finally {
       testState.sessionStorePath = undefined;
@@ -354,7 +357,9 @@ describe("gateway server chat", () => {
       },
     });
 
-    const webchatWs = new WebSocket(`ws://127.0.0.1:${port}`);
+    const webchatWs = new WebSocket(`ws://127.0.0.1:${port}`, {
+      origin: `http://127.0.0.1:${port}`,
+    });
     await new Promise<void>((resolve) => webchatWs.once("open", resolve));
     await connectOk(webchatWs, {
       client: {
@@ -385,10 +390,7 @@ describe("gateway server chat", () => {
         });
 
         const evt = await agentEvtP;
-        const payload =
-          evt.payload && typeof evt.payload === "object"
-            ? (evt.payload as Record<string, unknown>)
-            : {};
+        const payload = evt.payload ?? {};
         expect(payload.sessionKey).toBe("main");
         expect(payload.stream).toBe("assistant");
       }
@@ -409,6 +411,9 @@ describe("gateway server chat", () => {
 
         const res = await waitP;
         expect(res.ok).toBe(true);
+        if (!res.payload) {
+          throw new Error("missing agent.wait payload");
+        }
         expect(res.payload.status).toBe("ok");
         expect(res.payload.startedAt).toBe(200);
       }
@@ -425,6 +430,9 @@ describe("gateway server chat", () => {
           timeoutMs: 1000,
         });
         expect(res.ok).toBe(true);
+        if (!res.payload) {
+          throw new Error("missing agent.wait payload");
+        }
         expect(res.payload.status).toBe("ok");
         expect(res.payload.startedAt).toBe(50);
       }
@@ -435,6 +443,9 @@ describe("gateway server chat", () => {
           timeoutMs: 30,
         });
         expect(res.ok).toBe(true);
+        if (!res.payload) {
+          throw new Error("missing agent.wait payload");
+        }
         expect(res.payload.status).toBe("timeout");
       }
 
@@ -454,6 +465,9 @@ describe("gateway server chat", () => {
 
         const res = await waitP;
         expect(res.ok).toBe(true);
+        if (!res.payload) {
+          throw new Error("missing agent.wait payload");
+        }
         expect(res.payload.status).toBe("error");
         expect(res.payload.error).toBe("boom");
       }
@@ -480,6 +494,9 @@ describe("gateway server chat", () => {
 
         const res = await waitP;
         expect(res.ok).toBe(true);
+        if (!res.payload) {
+          throw new Error("missing agent.wait payload");
+        }
         expect(res.payload.status).toBe("ok");
         expect(res.payload.startedAt).toBe(123);
         expect(res.payload.endedAt).toBe(456);

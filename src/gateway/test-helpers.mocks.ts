@@ -159,7 +159,7 @@ const hoisted = vi.hoisted(() => ({
     }>,
   },
   cronIsolatedRun: vi.fn(async () => ({ status: "ok", summary: "ok" })),
-  agentCommand: vi.fn().mockResolvedValue(undefined),
+  agentCommand: vi.fn<(...args: unknown[]) => unknown>().mockResolvedValue(undefined),
   testIsNixMode: { value: false },
   sessionStoreSaveDelayMs: { value: 0 },
   embeddedRunMock: {
@@ -169,7 +169,7 @@ const hoisted = vi.hoisted(() => ({
     waitResults: new Map<string, boolean>(),
   },
   testTailscaleWhois: { value: null as TailscaleWhoisIdentity | null },
-  getReplyFromConfig: vi.fn().mockResolvedValue(undefined),
+  getReplyFromConfig: vi.fn<(...args: unknown[]) => unknown>().mockResolvedValue(undefined),
   sendWhatsAppMock: vi.fn().mockResolvedValue({ messageId: "msg-1", toJid: "jid-1" }),
 }));
 
@@ -201,8 +201,8 @@ export const testTailnetIPv4 = hoisted.testTailnetIPv4;
 export const testTailscaleWhois = hoisted.testTailscaleWhois;
 export const piSdkMock = hoisted.piSdkMock;
 export const cronIsolatedRun = hoisted.cronIsolatedRun;
-export const agentCommand: Mock<() => void> = hoisted.agentCommand;
-export const getReplyFromConfig: Mock<() => void> = hoisted.getReplyFromConfig;
+export const agentCommand: Mock<(...args: unknown[]) => unknown> = hoisted.agentCommand;
+export const getReplyFromConfig: Mock<(...args: unknown[]) => unknown> = hoisted.getReplyFromConfig;
 
 export const testState = {
   agentConfig: undefined as Record<string, unknown> | undefined,

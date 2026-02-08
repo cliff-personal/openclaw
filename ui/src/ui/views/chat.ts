@@ -60,6 +60,7 @@ export type ChatProps = {
   onRefresh: () => void;
   onToggleFocusMode: () => void;
   onDraftChange: (next: string) => void;
+  onDraftHistoryNavigate: (direction: "up" | "down") => void;
   onSend: () => void;
   onAbort?: () => void;
   onQueueRemove: (id: string) => void;
@@ -75,6 +76,64 @@ const COMPACTION_TOAST_DURATION_MS = 5000;
 function adjustTextareaHeight(el: HTMLTextAreaElement) {
   el.style.height = "auto";
   el.style.height = `${el.scrollHeight}px`;
+}
+
+function isCaretOnFirstLine(text: string, caret: number) {
+  return !text.slice(0, caret).includes("\n");
+}
+
+function isCaretOnLastLine(text: string, caret: number) {
+  return !text.slice(caret).includes("\n");
+}
+
+function resolveComposePlaceholder(connected: boolean, hasAttachments: boolean) {
+  if (!connected) {
+    return "Connect to the gateway to start chatting…";
+  }
+  if (hasAttachments) {
+    return "Add a message or paste more images...";
+  }
+  return "Message (↩ to send, Shift+↩ for line breaks, paste images)";
+}
+
+function handleChatTextareaKeydown(e: KeyboardEvent, props: ChatProps) {
+  if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    if (e.altKey || e.ctrlKey || e.metaKey) {
+      return;
+    }
+    const target = e.target as HTMLTextAreaElement;
+    if (target.selectionStart !== target.selectionEnd) {
+      return;
+    }
+    const caret = target.selectionStart;
+    const value = target.value ?? "";
+
+    if (e.key === "ArrowUp" && isCaretOnFirstLine(value, caret)) {
+      e.preventDefault();
+      props.onDraftHistoryNavigate("up");
+      return;
+    }
+    if (e.key === "ArrowDown" && isCaretOnLastLine(value, caret)) {
+      e.preventDefault();
+      props.onDraftHistoryNavigate("down");
+      return;
+    }
+  }
+
+  if (e.key !== "Enter") {
+    return;
+  }
+  if (e.isComposing || e.keyCode === 229) {
+    return;
+  }
+  if (e.shiftKey) {
+    return;
+  } // Allow Shift+Enter for line breaks
+  if (!props.connected || !props.canSend) {
+    return;
+  }
+  e.preventDefault();
+  props.onSend();
 }
 
 function renderCompactionIndicator(status: CompactionIndicatorStatus | null | undefined) {
@@ -104,6 +163,20 @@ function renderCompactionIndicator(status: CompactionIndicatorStatus | null | un
   }
 
   return nothing;
+}
+
+function renderChatStatusCallouts(props: ChatProps) {
+  const parts = [] as unknown[];
+  if (props.disabledReason) {
+    parts.push(html`<div class="callout">${props.disabledReason}</div>`);
+  }
+  if (props.error) {
+    parts.push(html`<div class="callout danger">${props.error}</div>`);
+  }
+  if (parts.length === 0) {
+    return nothing;
+  }
+  return html`${parts}`;
 }
 
 function generateAttachmentId(): string {
@@ -186,7 +259,6 @@ function renderAttachmentPreview(props: ChatProps) {
 }
 
 export function renderChat(props: ChatProps) {
-  const canCompose = props.connected;
   const isBusy = props.sending || props.stream !== null;
   const canAbort = Boolean(props.canAbort && props.onAbort);
   const activeSession = props.sessions?.sessions?.find((row) => row.key === props.sessionKey);
@@ -198,11 +270,7 @@ export function renderChat(props: ChatProps) {
   };
 
   const hasAttachments = (props.attachments?.length ?? 0) > 0;
-  const composePlaceholder = props.connected
-    ? hasAttachments
-      ? "Add a message or paste more images..."
-      : "Message (↩ to send, Shift+↩ for line breaks, paste images)"
-    : "Connect to the gateway to start chatting…";
+  const composePlaceholder = resolveComposePlaceholder(props.connected, hasAttachments);
 
   const splitRatio = props.splitRatio ?? 0.6;
   const sidebarOpen = Boolean(props.sidebarOpen && props.onCloseSidebar);
@@ -254,9 +322,7 @@ export function renderChat(props: ChatProps) {
 
   return html`
     <section class="card chat">
-      ${props.disabledReason ? html`<div class="callout">${props.disabledReason}</div>` : nothing}
-
-      ${props.error ? html`<div class="callout danger">${props.error}</div>` : nothing}
+      ${renderChatStatusCallouts(props)}
 
       ${renderCompactionIndicator(props.compactionStatus)}
 
@@ -366,24 +432,7 @@ export function renderChat(props: ChatProps) {
               ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
               .value=${props.draft}
               ?disabled=${!props.connected}
-              @keydown=${(e: KeyboardEvent) => {
-                if (e.key !== "Enter") {
-                  return;
-                }
-                if (e.isComposing || e.keyCode === 229) {
-                  return;
-                }
-                if (e.shiftKey) {
-                  return;
-                } // Allow Shift+Enter for line breaks
-                if (!props.connected) {
-                  return;
-                }
-                e.preventDefault();
-                if (canCompose) {
-                  props.onSend();
-                }
-              }}
+              @keydown=${(e: KeyboardEvent) => handleChatTextareaKeydown(e, props)}
               @input=${(e: Event) => {
                 const target = e.target as HTMLTextAreaElement;
                 adjustTextareaHeight(target);
@@ -403,13 +452,21 @@ export function renderChat(props: ChatProps) {
             </button>
             <button
               class="btn primary"
-              ?disabled=${!props.connected}
+              ?disabled=${!props.canSend}
               @click=${props.onSend}
             >
-              ${isBusy ? "Queue" : "Send"}<kbd class="btn-kbd">↵</kbd>
+              Send<kbd class="btn-kbd">↵</kbd>
             </button>
           </div>
         </div>
+
+        ${
+          isBusy
+            ? html`<div class="chat-compose__processing" role="status" aria-live="polite">
+                ${icons.loader} Processing...
+              </div>`
+            : nothing
+        }
       </div>
     </section>
   `;

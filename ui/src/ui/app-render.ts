@@ -1088,7 +1088,7 @@ export function renderApp(state: AppViewState) {
                 draft: state.chatMessage,
                 queue: state.chatQueue,
                 connected: state.connected,
-                canSend: state.connected,
+                canSend: state.connected && !state.chatSending && state.chatStream === null,
                 disabledReason: chatDisabledReason,
                 error: state.lastError,
                 sessions: state.sessionsResult,
@@ -1107,7 +1107,9 @@ export function renderApp(state: AppViewState) {
                   });
                 },
                 onChatScroll: (event) => state.handleChatScroll(event),
-                onDraftChange: (next) => (state.chatMessage = next),
+                onDraftChange: (next) => state.setChatMessage(next),
+                onDraftHistoryNavigate: (direction) =>
+                  state.handleChatInputHistoryNavigate(direction),
                 attachments: state.chatAttachments,
                 onAttachmentsChange: (next) => (state.chatAttachments = next),
                 onSend: () => state.handleSendChat(),

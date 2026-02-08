@@ -311,6 +311,16 @@
   gap: 8px;
 }
 
+.chat-compose__processing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 6px;
+  margin-top: 6px;
+}
+
 .chat-compose .chat-compose__actions .btn {
   padding: 0 16px;
   font-size: 13px;

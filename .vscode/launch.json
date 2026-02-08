@@ -37,9 +37,10 @@
       "program": "${workspaceFolder:openclaw}/openclaw.mjs",
       "args": ["gateway", "--port", "18790", "--verbose"],
       "env": {
-        "OPENCLAW_STATE_DIR": "${env:HOME}/.openclaw-debug"
+        "OPENCLAW_STATE_DIR": "${env:HOME}/.openclaw-debug",
+        "CLAWDBOT_DEBUG_TOOLS": "1"
       },
-      "runtimeArgs": ["--enable-source-maps"],
+      "runtimeArgs": ["--enable-source-maps", "--trace-warnings"],
       "preLaunchTask": "OpenClaw: prepare (isolated debug gateway)",
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"],

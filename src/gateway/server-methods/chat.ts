@@ -301,6 +301,9 @@ export const chatHandlers: GatewayRequestHandlers = {
   },
   "chat.send": async ({ params, respond, context, client }) => {
     if (!validateChatSendParams(params)) {
+      context.logGateway.debug(
+        `chat.send invalid params: ${formatValidationErrors(validateChatSendParams.errors)}`,
+      );
       respond(
         false,
         undefined,
@@ -346,6 +349,9 @@ export const chatHandlers: GatewayRequestHandlers = {
         .filter((a) => a.content) ?? [];
     const rawMessage = p.message.trim();
     if (!rawMessage && normalizedAttachments.length === 0) {
+      context.logGateway.debug(
+        `chat.send rejected empty message (sessionKey=${p.sessionKey} runId=${p.idempotencyKey})`,
+      );
       respond(
         false,
         undefined,
@@ -375,6 +381,10 @@ export const chatHandlers: GatewayRequestHandlers = {
     });
     const now = Date.now();
     const clientRunId = p.idempotencyKey;
+
+    context.logGateway.debug(
+      `chat.send start sessionKey=${p.sessionKey} runId=${clientRunId} chars=${rawMessage.length} attachments=${normalizedAttachments.length} deliver=${p.deliver !== false}`,
+    );
 
     const sendPolicy = resolveSendPolicy({
       cfg,
@@ -573,6 +583,9 @@ export const chatHandlers: GatewayRequestHandlers = {
           });
         })
         .catch((err) => {
+          context.logGateway.warn(
+            `chat.send failed sessionKey=${p.sessionKey} runId=${clientRunId}: ${formatForLog(err)}`,
+          );
           const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),
@@ -595,6 +608,9 @@ export const chatHandlers: GatewayRequestHandlers = {
           context.chatAbortControllers.delete(clientRunId);
         });
     } catch (err) {
+      context.logGateway.error(
+        `chat.send handler crashed sessionKey=${p.sessionKey} runId=${clientRunId}: ${formatForLog(err)}`,
+      );
       const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
       const payload = {
         runId: clientRunId,

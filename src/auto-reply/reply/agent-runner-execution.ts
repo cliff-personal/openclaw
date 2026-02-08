@@ -28,6 +28,7 @@ import { logVerbose } from "../../globals.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
+  isInternalMessageChannel,
   isMarkdownCapableMessageChannel,
   resolveMessageChannel,
 } from "../../utils/message-channel.js";
@@ -83,6 +84,12 @@ export async function runAgentTurnWithFallback(params: {
   let autoCompactionCompleted = false;
   // Track payloads sent directly (not via pipeline) during tool flush to avoid duplicates.
   const directlySentBlockKeys = new Set<string>();
+
+  const isWebchatSession = isInternalMessageChannel(
+    params.sessionCtx.Provider ?? params.sessionCtx.Surface,
+  );
+  const MAX_CONTEXT_OVERFLOW_ROLLOVER_ATTEMPTS = 2;
+  let contextOverflowRolloverAttempts = 0;
 
   const runId = params.opts?.runId ?? crypto.randomUUID();
   params.opts?.onAgentRunStart?.(runId);
@@ -478,6 +485,14 @@ export async function runAgentTurnWithFallback(params: {
         (await params.resetSessionAfterCompactionFailure(embeddedError.message))
       ) {
         didResetAfterCompactionFailure = true;
+        if (
+          isWebchatSession &&
+          !params.isHeartbeat &&
+          contextOverflowRolloverAttempts < MAX_CONTEXT_OVERFLOW_ROLLOVER_ATTEMPTS
+        ) {
+          contextOverflowRolloverAttempts += 1;
+          continue;
+        }
         return {
           kind: "final",
           payload: {
@@ -511,10 +526,41 @@ export async function runAgentTurnWithFallback(params: {
         (await params.resetSessionAfterCompactionFailure(message))
       ) {
         didResetAfterCompactionFailure = true;
+        if (
+          isWebchatSession &&
+          !params.isHeartbeat &&
+          contextOverflowRolloverAttempts < MAX_CONTEXT_OVERFLOW_ROLLOVER_ATTEMPTS
+        ) {
+          contextOverflowRolloverAttempts += 1;
+          continue;
+        }
         return {
           kind: "final",
           payload: {
             text: "⚠️ Context limit exceeded during compaction. I've reset our conversation to start fresh - please try again.\n\nTo prevent this, increase your compaction buffer by setting `agents.defaults.compaction.reserveTokensFloor` to 4000 or higher in your config.",
+          },
+        };
+      }
+
+      if (
+        isContextOverflow &&
+        !isCompactionFailure &&
+        !didResetAfterCompactionFailure &&
+        (await params.resetSessionAfterCompactionFailure(message))
+      ) {
+        didResetAfterCompactionFailure = true;
+        if (
+          isWebchatSession &&
+          !params.isHeartbeat &&
+          contextOverflowRolloverAttempts < MAX_CONTEXT_OVERFLOW_ROLLOVER_ATTEMPTS
+        ) {
+          contextOverflowRolloverAttempts += 1;
+          continue;
+        }
+        return {
+          kind: "final",
+          payload: {
+            text: "⚠️ Context limit exceeded. I've reset our conversation to start fresh - please try again.",
           },
         };
       }

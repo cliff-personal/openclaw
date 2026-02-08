@@ -443,10 +443,7 @@ describe("gateway server agent", () => {
     });
 
     const evt = await finalChatP;
-    const payload =
-      evt.payload && typeof evt.payload === "object"
-        ? (evt.payload as Record<string, unknown>)
-        : {};
+    const payload = evt.payload ?? {};
     expect(payload.sessionKey).toBe("main");
     expect(payload.runId).toBe("run-auto-1");
 

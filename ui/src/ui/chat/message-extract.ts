@@ -19,6 +19,20 @@ const ENVELOPE_CHANNELS = [
 const textCache = new WeakMap<object, string | null>();
 const thinkingCache = new WeakMap<object, string | null>();
 
+function extractAssistantErrorMessage(m: Record<string, unknown>): string | null {
+  const direct = typeof m.errorMessage === "string" ? m.errorMessage.trim() : "";
+  if (direct) {
+    return direct;
+  }
+  const err = m.error;
+  if (!err || typeof err !== "object" || Array.isArray(err)) {
+    return null;
+  }
+  const msg = (err as { message?: unknown }).message;
+  const nested = typeof msg === "string" ? msg.trim() : "";
+  return nested || null;
+}
+
 function looksLikeEnvelopeHeader(header: string): boolean {
   if (/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z\b/.test(header)) {
     return true;
@@ -30,7 +44,7 @@ function looksLikeEnvelopeHeader(header: string): boolean {
 }
 
 export function stripEnvelope(text: string): string {
-  const match = text.match(ENVELOPE_PREFIX);
+  const match = ENVELOPE_PREFIX.exec(text);
   if (!match) {
     return text;
   }
@@ -44,30 +58,20 @@ export function stripEnvelope(text: string): string {
 export function extractText(message: unknown): string | null {
   const m = message as Record<string, unknown>;
   const role = typeof m.role === "string" ? m.role : "";
-  const content = m.content;
-  if (typeof content === "string") {
-    const processed = role === "assistant" ? stripThinkingTags(content) : stripEnvelope(content);
-    return processed;
+
+  const rawText = extractRawText(message);
+  if (rawText) {
+    return role === "assistant" ? stripThinkingTags(rawText) : stripEnvelope(rawText);
   }
-  if (Array.isArray(content)) {
-    const parts = content
-      .map((p) => {
-        const item = p as Record<string, unknown>;
-        if (item.type === "text" && typeof item.text === "string") {
-          return item.text;
-        }
-        return null;
-      })
-      .filter((v): v is string => typeof v === "string");
-    if (parts.length > 0) {
-      const joined = parts.join("\n");
-      const processed = role === "assistant" ? stripThinkingTags(joined) : stripEnvelope(joined);
-      return processed;
+
+  // Some gateway transcripts persist model/runtime failures as assistant messages with
+  // empty `content` but a top-level `errorMessage`. Surface it so the UI doesn't render
+  // a blank assistant bubble.
+  if (role === "assistant") {
+    const errorMessage = extractAssistantErrorMessage(m);
+    if (errorMessage) {
+      return `Error: ${errorMessage}`;
     }
-  }
-  if (typeof m.text === "string") {
-    const processed = role === "assistant" ? stripThinkingTags(m.text) : stripEnvelope(m.text);
-    return processed;
   }
   return null;
 }
