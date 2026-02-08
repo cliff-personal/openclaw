@@ -10,6 +10,7 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
+import { mergeSessionEntry, updateSessionStore } from "../../config/sessions.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
@@ -46,6 +47,67 @@ type TranscriptAppendResult = {
   message?: Record<string, unknown>;
   error?: string;
 };
+
+async function ensureChatSendSessionEntry(params: {
+  storePath: string | undefined;
+  canonicalKey: string;
+  entry: unknown;
+  sessionId: string;
+  now: number;
+}): Promise<void> {
+  if (!params.storePath) {
+    return;
+  }
+  await updateSessionStore(params.storePath, (store) => {
+    const existing = params.entry as Parameters<typeof mergeSessionEntry>[0];
+    store[params.canonicalKey] = mergeSessionEntry(existing, {
+      sessionId: params.sessionId,
+      updatedAt: params.now,
+      chatType: existing?.chatType ?? "direct",
+      channel: existing?.channel ?? INTERNAL_MESSAGE_CHANNEL,
+      lastChannel: existing?.lastChannel ?? INTERNAL_MESSAGE_CHANNEL,
+    });
+  });
+}
+
+function resolveUserTranscriptText(params: {
+  parsedMessage: string;
+  rawMessage: string;
+  attachmentCount: number;
+}): string {
+  const trimmed = params.parsedMessage.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  if (params.attachmentCount > 0) {
+    const plural = params.attachmentCount === 1 ? "" : "s";
+    return `[${params.attachmentCount} attachment${plural}]`;
+  }
+  return params.rawMessage;
+}
+
+function maybeAppendUserTranscript(params: {
+  log: { warn: (msg: string) => void };
+  message: string;
+  sessionId: string;
+  storePath: string | undefined;
+  sessionFile?: string;
+}): void {
+  const text = params.message.trim();
+  if (!text) {
+    return;
+  }
+  const appended = appendUserTranscriptMessage({
+    message: text,
+    sessionId: params.sessionId,
+    storePath: params.storePath,
+    sessionFile: params.sessionFile,
+    createIfMissing: true,
+  });
+  if (!appended.ok) {
+    params.log.warn(`webchat transcript user append failed: ${appended.error ?? "unknown error"}`);
+  }
+}
 
 function resolveTranscriptPath(params: {
   sessionId: string;
@@ -124,6 +186,58 @@ function appendAssistantTranscriptMessage(params: {
     timestamp: now,
     stopReason: "injected",
     usage: { input: 0, output: 0, totalTokens: 0 },
+  };
+  const transcriptEntry = {
+    type: "message",
+    id: messageId,
+    timestamp: new Date(now).toISOString(),
+    message: messageBody,
+  };
+
+  try {
+    fs.appendFileSync(transcriptPath, `${JSON.stringify(transcriptEntry)}\n`, "utf-8");
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  return { ok: true, messageId, message: transcriptEntry.message };
+}
+
+function appendUserTranscriptMessage(params: {
+  message: string;
+  sessionId: string;
+  storePath: string | undefined;
+  sessionFile?: string;
+  createIfMissing?: boolean;
+}): TranscriptAppendResult {
+  const transcriptPath = resolveTranscriptPath({
+    sessionId: params.sessionId,
+    storePath: params.storePath,
+    sessionFile: params.sessionFile,
+  });
+  if (!transcriptPath) {
+    return { ok: false, error: "transcript path not resolved" };
+  }
+
+  if (!fs.existsSync(transcriptPath)) {
+    if (!params.createIfMissing) {
+      return { ok: false, error: "transcript file not found" };
+    }
+    const ensured = ensureTranscriptFile({
+      transcriptPath,
+      sessionId: params.sessionId,
+    });
+    if (!ensured.ok) {
+      return { ok: false, error: ensured.error ?? "failed to create transcript file" };
+    }
+  }
+
+  const now = Date.now();
+  const messageId = randomUUID().slice(0, 8);
+  const messageBody: Record<string, unknown> = {
+    role: "user",
+    content: [{ type: "text", text: params.message }],
+    timestamp: now,
   };
   const transcriptEntry = {
     type: "message",
@@ -331,21 +445,27 @@ export const chatHandlers: GatewayRequestHandlers = {
     const stopCommand = isChatStopCommandText(p.message);
     const normalizedAttachments =
       p.attachments
-        ?.map((a) => ({
-          type: typeof a?.type === "string" ? a.type : undefined,
-          mimeType: typeof a?.mimeType === "string" ? a.mimeType : undefined,
-          fileName: typeof a?.fileName === "string" ? a.fileName : undefined,
-          content:
-            typeof a?.content === "string"
-              ? a.content
-              : ArrayBuffer.isView(a?.content)
-                ? Buffer.from(
-                    a.content.buffer,
-                    a.content.byteOffset,
-                    a.content.byteLength,
-                  ).toString("base64")
-                : undefined,
-        }))
+        ?.map((a) => {
+          const type = typeof a?.type === "string" ? a.type : undefined;
+          const mimeType = typeof a?.mimeType === "string" ? a.mimeType : undefined;
+          const fileName = typeof a?.fileName === "string" ? a.fileName : undefined;
+          let content: string | undefined;
+          if (typeof a?.content === "string") {
+            content = a.content;
+          } else if (ArrayBuffer.isView(a?.content)) {
+            content = Buffer.from(
+              a.content.buffer,
+              a.content.byteOffset,
+              a.content.byteLength,
+            ).toString("base64");
+          }
+          return {
+            type,
+            mimeType,
+            fileName,
+            content,
+          };
+        })
         .filter((a) => a.content) ?? [];
     const rawMessage = p.message.trim();
     if (!rawMessage && normalizedAttachments.length === 0) {
@@ -374,7 +494,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         return;
       }
     }
-    const { cfg, entry } = loadSessionEntry(p.sessionKey);
+    const { cfg, storePath, entry, canonicalKey } = loadSessionEntry(p.sessionKey);
     const now = Date.now();
     const clientRunId = p.idempotencyKey;
     const sessionIdForRun = entry?.sessionId ?? clientRunId;
@@ -439,6 +559,16 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
 
     try {
+      // Ensure the session exists and is updated before we start.
+      // This makes `chat.history` stable even if no assistant output is produced.
+      await ensureChatSendSessionEntry({
+        storePath,
+        canonicalKey,
+        entry,
+        sessionId: sessionIdForRun,
+        now,
+      });
+
       const abortController = new AbortController();
       context.chatAbortControllers.set(clientRunId, {
         controller: abortController,
@@ -446,6 +576,19 @@ export const chatHandlers: GatewayRequestHandlers = {
         sessionKey: p.sessionKey,
         startedAtMs: now,
         expiresAtMs: resolveChatRunExpiresAtMs({ now, timeoutMs }),
+      });
+
+      // Append the user's message to the transcript so `chat.history` can reflect it immediately.
+      maybeAppendUserTranscript({
+        log: context.logGateway,
+        message: resolveUserTranscriptText({
+          parsedMessage,
+          rawMessage,
+          attachmentCount: normalizedAttachments.length,
+        }),
+        sessionId: sessionIdForRun,
+        storePath,
+        sessionFile: entry?.sessionFile,
       });
 
       // Map agent bus events (keyed by sessionId) to chat events (keyed by clientRunId).
@@ -553,7 +696,7 @@ export const chatHandlers: GatewayRequestHandlers = {
               return combinedReply;
             }
             const buffered = context.chatRunBuffers.get(clientRunId)?.trim() ?? "";
-            return buffered ? buffered : undefined;
+            return buffered || undefined;
           })();
           if (!agentRunStarted) {
             const combinedReply = finalReplyParts
