@@ -66,17 +66,27 @@ function parseCtxOverflowInfo(err: unknown): CtxOverflowInfo | null {
   }
 
   const match = CTX_OVERFLOW_RE.exec(trimmed);
-  if (!match) {
-    return null;
+  if (match) {
+    const requestedTokens = Number(match[1]);
+    const ctxLimit = Number(match[2]);
+    return {
+      requestedTokens: Number.isFinite(requestedTokens) ? requestedTokens : undefined,
+      ctxLimit: Number.isFinite(ctxLimit) ? ctxLimit : undefined,
+      message: trimmed,
+    };
   }
 
-  const requestedTokens = Number(match[1]);
-  const ctxLimit = Number(match[2]);
-  return {
-    requestedTokens: Number.isFinite(requestedTokens) ? requestedTokens : undefined,
-    ctxLimit: Number.isFinite(ctxLimit) ? ctxLimit : undefined,
-    message: trimmed,
-  };
+  const lower = trimmed.toLowerCase();
+  if (
+    lower.includes("exceeds the available context size") ||
+    lower.includes("maximum context length") ||
+    lower.includes("context overflow") ||
+    lower.includes("prompt is too long")
+  ) {
+    return { message: trimmed };
+  }
+
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

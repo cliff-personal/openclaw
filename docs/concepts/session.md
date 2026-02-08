@@ -95,6 +95,8 @@ Notes:
 - Retries are capped to avoid infinite loops. If your _single_ message is too large even for an empty session, the retry will still fail — shorten the input or switch to a larger-context model.
 - Other channels may reset the session but still ask you to re-send, depending on delivery constraints.
 
+See also: [Context overflow](/gateway/context-overflow).
+
 ## Mapping transports → session keys
 
 - Direct chats follow `session.dmScope` (default `main`).

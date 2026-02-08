@@ -1071,6 +1071,7 @@
                       "gateway/configuration-examples",
                       "gateway/authentication",
                       "gateway/health",
+                      "gateway/context-overflow",
                       "gateway/heartbeat",
                       "gateway/doctor",
                       "gateway/logging",

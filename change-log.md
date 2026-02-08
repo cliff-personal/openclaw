@@ -5,6 +5,8 @@ Date: 2026-02-08
 ## Summary
 
 - Gateway: recover from local model context overflow by rolling over to a new session (inject a compact handoff + retry once).
+- Docs: add a dedicated context overflow page (causes, recovery behavior, and mitigation steps).
+- Gateway: broaden context overflow detection to cover more provider error strings.
 - Control UI: improve chat compose UX with input history (localStorage), up/down navigation, and clear “Processing…” / disabled Send while busy.
 - Control UI: render assistant replies immediately on `chat` `final`/`error` events (append message locally), and avoid `chat.history` overwriting newer local messages right after send (fixes “blank until refresh” reports).
 - Gateway: add more debug/warn/error logs around `chat.send` for easier troubleshooting.
