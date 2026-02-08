@@ -1088,7 +1088,11 @@ export function renderApp(state: AppViewState) {
                 draft: state.chatMessage,
                 queue: state.chatQueue,
                 connected: state.connected,
-                canSend: state.connected && !state.chatSending && state.chatStream === null,
+                canSend:
+                  state.connected &&
+                  !state.chatSending &&
+                  state.chatRunId === null &&
+                  state.chatStream === null,
                 disabledReason: chatDisabledReason,
                 error: state.lastError,
                 sessions: state.sessionsResult,
