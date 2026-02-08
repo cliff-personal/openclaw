@@ -44,6 +44,21 @@ async function pollChatRunStatus(params: {
 
       if (res?.status === "ok") {
         await loadChatHistory(state);
+
+        // If events/history didn't yield an assistant message yet, fall back to any
+        // best-effort summary included in the poll response.
+        const summary = typeof res.summary === "string" ? res.summary.trim() : "";
+        if (summary) {
+          const message = {
+            role: "assistant",
+            content: [{ type: "text", text: summary }],
+            timestamp: Date.now(),
+          };
+          if (shouldAppendMessage(state.chatMessages, message)) {
+            state.chatMessages = [...state.chatMessages, message];
+          }
+        }
+
         state.chatRunId = null;
         state.chatStream = null;
         state.chatStreamStartedAt = null;

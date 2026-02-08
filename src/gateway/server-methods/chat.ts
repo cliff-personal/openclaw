@@ -543,6 +543,18 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
       })
         .then(() => {
+          const bestEffortSummary = (() => {
+            const combinedReply = finalReplyParts
+              .map((part) => part.trim())
+              .filter(Boolean)
+              .join("\n\n")
+              .trim();
+            if (combinedReply) {
+              return combinedReply;
+            }
+            const buffered = context.chatRunBuffers.get(clientRunId)?.trim() ?? "";
+            return buffered ? buffered : undefined;
+          })();
           if (!agentRunStarted) {
             const combinedReply = finalReplyParts
               .map((part) => part.trim())
@@ -588,7 +600,11 @@ export const chatHandlers: GatewayRequestHandlers = {
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),
             ok: true,
-            payload: { runId: clientRunId, status: "ok" as const },
+            payload: {
+              runId: clientRunId,
+              status: "ok" as const,
+              summary: bestEffortSummary,
+            },
           });
         })
         .catch((err) => {

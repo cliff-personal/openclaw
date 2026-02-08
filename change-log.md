@@ -12,6 +12,8 @@ Date: 2026-02-08
 - Tests/docs: add coverage for overflow recovery and document the behavior.
 - Control UI Chat: fix “Send looks stuck / Processing…” when the gateway never delivers `chat` events (e.g. gateway restart/OOM, event stream interruption) by adding a watchdog that polls `chat.send` status (idempotencyKey) and refreshes `chat.history` on completion.
 - Control UI Chat: clear in-flight run state on WebSocket `onClose` so the UI doesn't stay busy after disconnects.
+- Control UI Chat: persist the compose draft in localStorage (per sessionKey) so a refresh doesn't wipe unsent text.
+- Gateway/UI: include a best-effort `summary` in `chat.send` completion polling responses so the UI can render something even if `chat` events/transcript lag.
 - Dev tooling: isolated debug gateway now writes `gateway.auth.token` into the isolated config so the debug gateway can start in token-auth mode.
 
 ## Root cause & fix

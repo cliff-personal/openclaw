@@ -12,6 +12,7 @@ import { normalizeBasePath } from "./navigation.ts";
 export type ChatHost = {
   connected: boolean;
   chatMessage: string;
+  setChatMessage: (next: string) => void;
   chatAttachments: ChatAttachment[];
   chatQueue: ChatQueueItem[];
   chatRunId: string | null;
@@ -30,6 +31,46 @@ export const CHAT_SESSIONS_ACTIVE_MINUTES = 120;
 
 export function isChatBusy(host: ChatHost) {
   return host.chatSending || Boolean(host.chatRunId);
+}
+
+const CHAT_DRAFT_STORAGE_KEY_PREFIX = "openclaw.chat.draft.v1:";
+
+function resolveChatDraftStorageKey(sessionKey: string): string {
+  return `${CHAT_DRAFT_STORAGE_KEY_PREFIX}${sessionKey}`;
+}
+
+export function loadChatDraftFromStorage(sessionKey: string): string {
+  if (globalThis.window === undefined) {
+    return "";
+  }
+  try {
+    const raw = globalThis.localStorage.getItem(resolveChatDraftStorageKey(sessionKey));
+    return typeof raw === "string" ? raw : "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveChatDraftToStorage(sessionKey: string, draft: string) {
+  if (globalThis.window === undefined) {
+    return;
+  }
+  try {
+    const key = resolveChatDraftStorageKey(sessionKey);
+    const trimmed = draft;
+    if (!trimmed) {
+      globalThis.localStorage.removeItem(key);
+      return;
+    }
+    globalThis.localStorage.setItem(key, trimmed);
+  } catch {
+    // ignore
+  }
+}
+
+function setChatDraft(host: ChatHost, next: string) {
+  host.setChatMessage(next);
+  saveChatDraftToStorage(host.sessionKey, next);
 }
 
 export function isChatStopCommand(text: string) {
@@ -66,7 +107,7 @@ export async function handleAbortChat(host: ChatHost) {
   if (!host.connected) {
     return;
   }
-  host.chatMessage = "";
+  setChatDraft(host, "");
   await abortChatRun(host as unknown as OpenClawApp);
 }
 
@@ -162,7 +203,7 @@ export async function handleSendChat(
 
   const refreshSessions = isChatResetCommand(message);
   if (messageOverride == null) {
-    host.chatMessage = "";
+    setChatDraft(host, "");
     host.chatAttachments = [];
   }
 
@@ -265,6 +306,7 @@ export function handleChatInputHistoryNavigate(host: ChatHost, direction: "up" |
     } else {
       host.chatInputHistoryIndex = null;
       host.chatMessage = host.chatInputHistoryDraft ?? "";
+      saveChatDraftToStorage(host.sessionKey, host.chatMessage);
       host.chatInputHistoryDraft = null;
       return;
     }
@@ -275,6 +317,7 @@ export function handleChatInputHistoryNavigate(host: ChatHost, direction: "up" |
     return;
   }
   host.chatMessage = entries[nextIndex] ?? host.chatMessage;
+  saveChatDraftToStorage(host.sessionKey, host.chatMessage);
 }
 
 function recordChatInputHistory(host: ChatHost, text: string) {

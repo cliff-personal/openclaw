@@ -48,6 +48,8 @@ import {
   handleSendChat as handleSendChatInternal,
   removeQueuedMessage as removeQueuedMessageInternal,
   resetChatInputHistoryNavigation as resetChatInputHistoryNavigationInternal,
+  loadChatDraftFromStorage as loadChatDraftFromStorageInternal,
+  saveChatDraftToStorage as saveChatDraftToStorageInternal,
 } from "./app-chat.ts";
 import { DEFAULT_CRON_FORM, DEFAULT_LOG_LEVEL_FILTERS } from "./app-defaults.ts";
 import { connectGateway as connectGatewayInternal } from "./app-gateway.ts";
@@ -365,6 +367,13 @@ export class OpenClawApp extends LitElement {
 
   protected updated(changed: Map<PropertyKey, unknown>) {
     handleUpdated(this as unknown as Parameters<typeof handleUpdated>[0], changed);
+
+    if (changed.has("sessionKey") && !this.chatMessage) {
+      const restored = loadChatDraftFromStorageInternal(this.sessionKey);
+      if (restored) {
+        this.chatMessage = restored;
+      }
+    }
   }
 
   connect() {
@@ -438,6 +447,7 @@ export class OpenClawApp extends LitElement {
       this as unknown as Parameters<typeof resetChatInputHistoryNavigationInternal>[0],
     );
     this.chatMessage = next;
+    saveChatDraftToStorageInternal(this.sessionKey, next);
   }
 
   handleChatInputHistoryNavigate(direction: "up" | "down") {
