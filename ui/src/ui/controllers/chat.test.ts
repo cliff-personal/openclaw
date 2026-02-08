@@ -86,10 +86,35 @@ describe("handleChatEvent", () => {
       runId: "run-1",
       sessionKey: "main",
       state: "final",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello" }],
+        timestamp: 123,
+      },
     };
     expect(handleChatEvent(state, payload)).toBe("final");
     expect(state.chatRunId).toBe(null);
     expect(state.chatStream).toBe(null);
     expect(state.chatStreamStartedAt).toBe(null);
+    expect(state.chatMessages).toHaveLength(1);
+  });
+
+  it("appends an error message bubble on error", () => {
+    const state = createState({
+      sessionKey: "main",
+      chatRunId: "run-1",
+      chatStream: "Working",
+    });
+    const payload: ChatEventPayload = {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "error",
+      errorMessage: "context overflow",
+    };
+    expect(handleChatEvent(state, payload)).toBe("error");
+    expect(state.chatRunId).toBe(null);
+    expect(state.chatStream).toBe(null);
+    expect(state.lastError).toBe("context overflow");
+    expect(state.chatMessages).toHaveLength(1);
   });
 });

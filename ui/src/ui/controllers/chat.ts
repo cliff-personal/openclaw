@@ -41,13 +41,53 @@ export async function loadChatHistory(state: ChatState) {
         limit: 200,
       },
     );
-    state.chatMessages = Array.isArray(res.messages) ? res.messages : [];
+    const nextMessages = Array.isArray(res.messages) ? res.messages : [];
+
+    // Avoid clobbering optimistic/local messages with stale history (common right after a
+    // streaming run final event, where persistence can lag a bit).
+    if (state.chatMessages.length > 0 && nextMessages.length > 0) {
+      const prevTail = state.chatMessages.slice(-5);
+      const nextTail = nextMessages.slice(-20);
+      const sig = (m: unknown) => {
+        const roleRaw = (m as { role?: unknown })?.role;
+        const role = typeof roleRaw === "string" ? roleRaw : "";
+        const text = extractText(m);
+        return `${role}::${typeof text === "string" ? text.trim() : ""}`;
+      };
+      const nextSigs = new Set(nextTail.map(sig));
+      const hasOverlap = prevTail.some((m) => nextSigs.has(sig(m)));
+      if (hasOverlap || nextMessages.length >= state.chatMessages.length) {
+        state.chatMessages = nextMessages;
+      }
+    } else if (nextMessages.length > 0 || state.chatMessages.length === 0) {
+      state.chatMessages = nextMessages;
+    }
     state.chatThinkingLevel = res.thinkingLevel ?? null;
   } catch (err) {
     state.lastError = String(err);
   } finally {
     state.chatLoading = false;
   }
+}
+
+function shouldAppendMessage(messages: unknown[], candidate: unknown): boolean {
+  const candidateText = extractText(candidate);
+  const candidateRole = (candidate as { role?: unknown })?.role;
+  for (const prev of messages.slice(-3)) {
+    const prevRole = (prev as { role?: unknown })?.role;
+    if (prevRole !== candidateRole) {
+      continue;
+    }
+    const prevText = extractText(prev);
+    if (
+      typeof candidateText === "string" &&
+      typeof prevText === "string" &&
+      candidateText.trim() === prevText.trim()
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function dataUrlToBase64(dataUrl: string): { content: string; mimeType: string } | null {
@@ -194,6 +234,9 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
       }
     }
   } else if (payload.state === "final") {
+    if (payload.message && shouldAppendMessage(state.chatMessages, payload.message)) {
+      state.chatMessages = [...state.chatMessages, payload.message];
+    }
     state.chatStream = null;
     state.chatRunId = null;
     state.chatStreamStartedAt = null;
@@ -206,6 +249,16 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
     state.chatRunId = null;
     state.chatStreamStartedAt = null;
     state.lastError = payload.errorMessage ?? "chat error";
+    if (payload.errorMessage) {
+      const message = {
+        role: "assistant",
+        content: [{ type: "text", text: "Error: " + payload.errorMessage }],
+        timestamp: Date.now(),
+      };
+      if (shouldAppendMessage(state.chatMessages, message)) {
+        state.chatMessages = [...state.chatMessages, message];
+      }
+    }
   }
   return payload.state;
 }
