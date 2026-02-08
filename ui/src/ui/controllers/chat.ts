@@ -225,18 +225,6 @@ export async function sendChatMessage(
     : undefined;
 
   try {
-    // Subscribe this connection to session-scoped chat events.
-    // The gateway emits most chat events via `nodeSendToSession(sessionKey, "chat", ...)`,
-    // which requires an explicit `chat.subscribe` for the session.
-    try {
-      await state.client.request("node.event", {
-        event: "chat.subscribe",
-        payload: { sessionKey: state.sessionKey },
-      });
-    } catch {
-      // Best-effort; fallback watchdog polling still recovers UI state.
-    }
-
     await state.client.request("chat.send", {
       sessionKey: state.sessionKey,
       message: msg,

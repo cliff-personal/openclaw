@@ -375,12 +375,13 @@ export const chatHandlers: GatewayRequestHandlers = {
       }
     }
     const { cfg, entry } = loadSessionEntry(p.sessionKey);
+    const now = Date.now();
+    const clientRunId = p.idempotencyKey;
+    const sessionIdForRun = entry?.sessionId ?? clientRunId;
     const timeoutMs = resolveAgentTimeoutMs({
       cfg,
       overrideMs: p.timeoutMs,
     });
-    const now = Date.now();
-    const clientRunId = p.idempotencyKey;
 
     context.logGateway.debug(
       `chat.send start sessionKey=${p.sessionKey} runId=${clientRunId} chars=${rawMessage.length} attachments=${normalizedAttachments.length} deliver=${p.deliver !== false}`,
@@ -441,10 +442,18 @@ export const chatHandlers: GatewayRequestHandlers = {
       const abortController = new AbortController();
       context.chatAbortControllers.set(clientRunId, {
         controller: abortController,
-        sessionId: entry?.sessionId ?? clientRunId,
+        sessionId: sessionIdForRun,
         sessionKey: p.sessionKey,
         startedAtMs: now,
         expiresAtMs: resolveChatRunExpiresAtMs({ now, timeoutMs }),
+      });
+
+      // Map agent bus events (keyed by sessionId) to chat events (keyed by clientRunId).
+      // Without this, the UI may never receive `event:"chat"` frames (or will receive them
+      // under the wrong runId), causing the chat page to appear stuck.
+      context.addChatRun(sessionIdForRun, {
+        sessionKey: p.sessionKey,
+        clientRunId,
       });
       const ackPayload = {
         runId: clientRunId,
@@ -606,6 +615,10 @@ export const chatHandlers: GatewayRequestHandlers = {
         })
         .finally(() => {
           context.chatAbortControllers.delete(clientRunId);
+
+          // Best-effort cleanup in case agent lifecycle events never arrive.
+          // (Normally cleaned up by the agent event handler when the run ends.)
+          context.removeChatRun(sessionIdForRun, clientRunId, p.sessionKey);
         });
     } catch (err) {
       context.logGateway.error(

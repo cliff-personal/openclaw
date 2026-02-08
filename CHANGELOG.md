@@ -32,6 +32,7 @@ Docs: https://docs.openclaw.ai
 - Telegram: auto-inject DM topic threadId in message tool + subagent announce. (#7235) Thanks @Lukavyi.
 - Security: require auth for Gateway canvas host and A2UI assets. (#9518) Thanks @coygeek.
 - Cron: fix scheduling and reminder delivery regressions; harden next-run recompute + timer re-arming + legacy schedule fields. (#9733, #9823, #9948, #9932) Thanks @tyler6204, @pycckuu, @j2h4u, @fujiwara-tofu-shop.
+- Web UI: fix Control UI chat streaming updates for operator clients (register chat runs on send; remove invalid node-only chat subscribe calls).
 - Update: harden Control UI asset handling in update flow. (#10146) Thanks @gumadeiras.
 - Security: add skill/plugin code safety scanner; redact credentials from config.get gateway responses. (#9806, #9858) Thanks @abdelsfane.
 - Exec approvals: coerce bare string allowlist entries to objects. (#9903) Thanks @mcaxtr.
