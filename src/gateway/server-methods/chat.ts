@@ -38,6 +38,7 @@ import {
   readSessionMessages,
   resolveSessionModelRef,
 } from "../session-utils.js";
+import { isLikelyChatSlashCommandText } from "../slash-command.js";
 import { formatForLog } from "../ws-log.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 
@@ -460,10 +461,24 @@ export const chatHandlers: GatewayRequestHandlers = {
 
     const activeExisting = context.chatAbortControllers.get(clientRunId);
     if (activeExisting) {
-      respond(true, { runId: clientRunId, status: "in_flight" as const }, undefined, {
-        cached: true,
-        runId: clientRunId,
-      });
+      const startedAtMs = activeExisting.startedAtMs;
+      const expiresAtMs = activeExisting.expiresAtMs;
+      const timeoutMs = Math.max(1, expiresAtMs - startedAtMs);
+      respond(
+        true,
+        {
+          runId: clientRunId,
+          status: "in_flight" as const,
+          startedAtMs,
+          expiresAtMs,
+          timeoutMs,
+        },
+        undefined,
+        {
+          cached: true,
+          runId: clientRunId,
+        },
+      );
       return;
     }
 
@@ -479,12 +494,13 @@ export const chatHandlers: GatewayRequestHandlers = {
       });
 
       const abortController = new AbortController();
+      const expiresAtMs = resolveChatRunExpiresAtMs({ now, timeoutMs });
       context.chatAbortControllers.set(clientRunId, {
         controller: abortController,
         sessionId: sessionIdForRun,
         sessionKey: p.sessionKey,
         startedAtMs: now,
-        expiresAtMs: resolveChatRunExpiresAtMs({ now, timeoutMs }),
+        expiresAtMs,
       });
 
       // Map agent bus events (keyed by sessionId) to chat events (keyed by clientRunId).
@@ -497,15 +513,18 @@ export const chatHandlers: GatewayRequestHandlers = {
       const ackPayload = {
         runId: clientRunId,
         status: "started" as const,
+        startedAtMs: now,
+        expiresAtMs,
+        timeoutMs,
       };
       respond(true, ackPayload, undefined, { runId: clientRunId });
 
       const trimmedMessage = parsedMessage.trim();
       const injectThinking = Boolean(
-        p.thinking && trimmedMessage && !trimmedMessage.startsWith("/"),
+        p.thinking && trimmedMessage && !isLikelyChatSlashCommandText(trimmedMessage),
       );
       const commandBody = injectThinking ? `/think ${p.thinking} ${parsedMessage}` : parsedMessage;
-      const isSlashCommand = trimmedMessage.startsWith("/");
+      const isSlashCommand = isLikelyChatSlashCommandText(trimmedMessage);
       const clientInfo = client?.connect?.client;
       // Inject timestamp so agents know the current date/time.
       // Only BodyForAgent gets the timestamp — Body stays raw for UI display.

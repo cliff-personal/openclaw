@@ -20,20 +20,16 @@ export function scheduleChatScroll(host: ScrollHost, force = false) {
     cancelAnimationFrame(host.chatScrollFrame);
   }
   if (host.chatScrollTimeout != null) {
-    clearTimeout(host.chatScrollTimeout);
+    window.clearTimeout(host.chatScrollTimeout);
     host.chatScrollTimeout = null;
   }
   const pickScrollTarget = () => {
     const container = host.querySelector(".chat-thread") as HTMLElement | null;
+    // Always prefer the chat thread when present.
+    // When the thread isn't scrollable yet (empty/history loading/layout settling),
+    // falling back to the document can cause scroll jumps.
     if (container) {
-      const overflowY = getComputedStyle(container).overflowY;
-      const canScroll =
-        overflowY === "auto" ||
-        overflowY === "scroll" ||
-        container.scrollHeight - container.clientHeight > 1;
-      if (canScroll) {
-        return container;
-      }
+      return container;
     }
     return (document.scrollingElement ?? document.documentElement) as HTMLElement | null;
   };
@@ -144,7 +140,7 @@ export function exportLogs(lines: string[], label: string) {
   const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const stamp = new Date().toISOString().slice(0, 19).replaceAll(":", "-").replaceAll("T", "-");
   anchor.href = url;
   anchor.download = `openclaw-logs-${label}-${stamp}.log`;
   anchor.click();

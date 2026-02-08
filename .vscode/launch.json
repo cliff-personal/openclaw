@@ -14,6 +14,15 @@
       "skipFiles": ["<node_internals>/**"],
       "resolveSourceMapLocations": ["${workspaceFolder:openclaw}/**", "!**/node_modules/**"],
       "outFiles": ["${workspaceFolder:openclaw}/dist/**/*.js"]
+    },
+    {
+      "name": "OpenClaw: Control UI (Chrome, 5173)",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:5173/",
+      "webRoot": "${workspaceFolder:openclaw}/ui/src",
+      "sourceMaps": true,
+      "resolveSourceMapLocations": ["${workspaceFolder:openclaw}/ui/**", "!**/node_modules/**"]
     }
   ]
 }

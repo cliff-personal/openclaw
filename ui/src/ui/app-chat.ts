@@ -5,6 +5,8 @@ import { parseAgentSessionKey } from "../../../src/sessions/session-key-utils.js
 import { scheduleChatScroll } from "./app-scroll.ts";
 import { setLastActiveSessionKey } from "./app-settings.ts";
 import { resetToolStream } from "./app-tool-stream.ts";
+import { saveChatDraftToStorage } from "./chat/draft-storage.ts";
+export { loadChatDraftFromStorage, saveChatDraftToStorage } from "./chat/draft-storage.ts";
 import { abortChatRun, loadChatHistory, sendChatMessage } from "./controllers/chat.ts";
 import { loadSessions } from "./controllers/sessions.ts";
 import { normalizeBasePath } from "./navigation.ts";
@@ -31,41 +33,6 @@ export const CHAT_SESSIONS_ACTIVE_MINUTES = 120;
 
 export function isChatBusy(host: ChatHost) {
   return host.chatSending || Boolean(host.chatRunId);
-}
-
-const CHAT_DRAFT_STORAGE_KEY_PREFIX = "openclaw.chat.draft.v1:";
-
-function resolveChatDraftStorageKey(sessionKey: string): string {
-  return `${CHAT_DRAFT_STORAGE_KEY_PREFIX}${sessionKey}`;
-}
-
-export function loadChatDraftFromStorage(sessionKey: string): string {
-  if (globalThis.window === undefined) {
-    return "";
-  }
-  try {
-    const raw = globalThis.localStorage.getItem(resolveChatDraftStorageKey(sessionKey));
-    return typeof raw === "string" ? raw : "";
-  } catch {
-    return "";
-  }
-}
-
-export function saveChatDraftToStorage(sessionKey: string, draft: string) {
-  if (globalThis.window === undefined) {
-    return;
-  }
-  try {
-    const key = resolveChatDraftStorageKey(sessionKey);
-    const trimmed = draft;
-    if (!trimmed) {
-      globalThis.localStorage.removeItem(key);
-      return;
-    }
-    globalThis.localStorage.setItem(key, trimmed);
-  } catch {
-    // ignore
-  }
 }
 
 function setChatDraft(host: ChatHost, next: string) {

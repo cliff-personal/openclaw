@@ -201,6 +201,43 @@ describe("scheduleChatScroll", () => {
 
     expect(host.chatNewMessagesBelow).toBe(true);
   });
+
+  it("never scrolls the document when .chat-thread exists (even if not scrollable)", async () => {
+    const thread = document.createElement("div");
+    thread.className = "chat-thread";
+    thread.style.height = "400px";
+    thread.style.overflowY = "hidden";
+    document.body.appendChild(thread);
+
+    Object.defineProperty(thread, "scrollHeight", { value: 2000, configurable: true });
+    Object.defineProperty(thread, "clientHeight", { value: 400, configurable: true });
+    Object.defineProperty(thread, "scrollTop", { value: 0, writable: true, configurable: true });
+
+    const host = {
+      updateComplete: Promise.resolve(),
+      querySelector: (selectors: string) => document.querySelector(selectors),
+      style: { setProperty: vi.fn() } as unknown as CSSStyleDeclaration,
+      chatScrollFrame: null as number | null,
+      chatScrollTimeout: null as number | null,
+      chatHasAutoScrolled: false,
+      chatUserNearBottom: true,
+      chatNewMessagesBelow: false,
+      logsScrollFrame: null as number | null,
+      logsAtBottom: true,
+      topbarObserver: null as ResizeObserver | null,
+    };
+
+    scheduleChatScroll(host, true);
+    await host.updateComplete;
+
+    try {
+      // Regression check: when a chat thread exists, we should scroll it even
+      // if it's not currently scrollable (avoids falling back to the document).
+      expect(thread.scrollTop).toBe(thread.scrollHeight);
+    } finally {
+      thread.remove();
+    }
+  });
 });
 
 /* ------------------------------------------------------------------ */

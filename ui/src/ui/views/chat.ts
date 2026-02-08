@@ -9,6 +9,7 @@ import {
   renderReadingIndicatorGroup,
   renderStreamingGroup,
 } from "../chat/grouped-render.ts";
+import { isLikelyImeConfirmEnter } from "../chat/ime.ts";
 import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer.ts";
 import { icons } from "../icons.ts";
 import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
@@ -33,6 +34,9 @@ export type ChatProps = {
   toolMessages: unknown[];
   stream: string | null;
   streamStartedAt: number | null;
+  runStartedAtMs: number | null;
+  runExpiresAtMs: number | null;
+  processingNowMs: number;
   assistantAvatarUrl?: string | null;
   draft: string;
   queue: ChatQueueItem[];
@@ -123,7 +127,8 @@ function handleChatTextareaKeydown(e: KeyboardEvent, props: ChatProps) {
   if (e.key !== "Enter") {
     return;
   }
-  if (e.isComposing || e.keyCode === 229) {
+  const target = e.target as HTMLTextAreaElement;
+  if (isLikelyImeConfirmEnter(e, target)) {
     return;
   }
   if (e.shiftKey) {
@@ -432,6 +437,17 @@ export function renderChat(props: ChatProps) {
               ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
               .value=${props.draft}
               ?disabled=${!props.connected}
+              @compositionstart=${(e: CompositionEvent) => {
+                const target = e.target as HTMLTextAreaElement;
+                target.dataset.composing = "1";
+              }}
+              @compositionend=${(e: CompositionEvent) => {
+                const target = e.target as HTMLTextAreaElement;
+                target.dataset.composing = "0";
+                target.dataset.lastCompositionEndAt = String(Date.now());
+                adjustTextareaHeight(target);
+                props.onDraftChange(target.value);
+              }}
               @keydown=${(e: KeyboardEvent) => handleChatTextareaKeydown(e, props)}
               @input=${(e: Event) => {
                 const target = e.target as HTMLTextAreaElement;
@@ -460,13 +476,38 @@ export function renderChat(props: ChatProps) {
           </div>
         </div>
 
-        ${
-          isBusy
-            ? html`<div class="chat-compose__processing" role="status" aria-live="polite">
-                ${icons.loader} Processing...
-              </div>`
-            : nothing
-        }
+        ${(() => {
+          if (!isBusy) {
+            return nothing;
+          }
+
+          const nowMs = props.processingNowMs || Date.now();
+          const startedAtMs = props.runStartedAtMs ?? props.streamStartedAt;
+          const expiresAtMs = props.runExpiresAtMs ?? null;
+
+          const fallbackTimeoutMs = 120_000;
+          const timeoutMs =
+            startedAtMs != null && expiresAtMs != null && expiresAtMs > startedAtMs
+              ? expiresAtMs - startedAtMs
+              : fallbackTimeoutMs;
+          const effectiveStartedAtMs = startedAtMs ?? nowMs;
+          const elapsedMs = Math.max(0, nowMs - effectiveStartedAtMs);
+          const ratio = timeoutMs > 0 ? Math.min(0.99, elapsedMs / timeoutMs) : 0;
+          const percent = Math.max(0, Math.min(99, Math.floor(ratio * 100)));
+          const etaSec = Math.max(0, Math.ceil((timeoutMs - elapsedMs) / 1000));
+
+          return html`
+            <div class="chat-compose__processing" role="status" aria-live="polite">
+              <div class="chat-compose__processingLine">
+                ${icons.loader}
+                <span>Processing ${percent}% (ETA: ${etaSec}s)</span>
+              </div>
+              <div class="chat-compose__progressBar" aria-hidden="true">
+                <div class="chat-compose__progressFill" style="width: ${percent}%"></div>
+              </div>
+            </div>
+          `;
+        })()}
       </div>
     </section>
   `;

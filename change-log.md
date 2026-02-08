@@ -18,6 +18,12 @@ Date: 2026-02-08
 - Gateway: ensure `chat.send` updates the session store so `chat.history` resolves the correct session/transcript.
 - Gateway: make `chat.send` polling complete only on agent lifecycle end/error (prevents premature `ok`/empty `final` on slow models).
 - Gateway: avoid duplicate transcript writes when the UI polls `chat.send` with the same `idempotencyKey`.
+- Gateway/UI Chat: include `startedAtMs`/`expiresAtMs`/`timeoutMs` in `chat.send` `started`/`in_flight` responses; render a best-effort processing progress bar + ETA in the Control UI.
+- Gateway: avoid treating absolute paths like `/Users/...` as slash-commands.
+- Control UI Chat: extend the watchdog polling deadline based on the gateway run window (`expiresAtMs`) to avoid false “timed out” errors on long runs.
+- Gateway: disable Bonjour/mDNS gracefully when `@homebridge/ciao` reports “no interfaces found” (prevents startup crashes in constrained environments).
+- Control UI Chat: improve IME Enter handling (avoid sending on IME confirm) and centralize draft/pending-send persistence.
+- Dev tooling: add a VS Code launch config for debugging the Control UI in Chrome (Vite on 5173).
 
 ## Root cause & fix
 

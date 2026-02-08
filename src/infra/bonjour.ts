@@ -88,8 +88,19 @@ export async function startGatewayBonjourAdvertiser(
     return { stop: async () => {} };
   }
 
-  const { getResponder, Protocol } = await import("@homebridge/ciao");
-  const responder = getResponder();
+  let Protocol: { TCP: unknown };
+  let responder: { createService: (...args: unknown[]) => unknown; shutdown: () => Promise<void> };
+  try {
+    const ciao = await import("@homebridge/ciao");
+    Protocol = ciao.Protocol;
+    responder = ciao.getResponder();
+  } catch (err) {
+    logWarn(
+      `bonjour: disabled (failed to initialize mDNS responder): ${formatBonjourError(err)}; ` +
+        `set OPENCLAW_DISABLE_BONJOUR=1 to silence this warning`,
+    );
+    return { stop: async () => {} };
+  }
 
   // mDNS service instance names are single DNS labels; dots in hostnames (like
   // `Mac.localdomain`) can confuse some resolvers/browsers and break discovery.

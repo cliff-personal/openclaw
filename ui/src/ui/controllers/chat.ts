@@ -1,5 +1,6 @@
 import type { GatewayBrowserClient } from "../gateway.ts";
 import type { ChatAttachment } from "../ui-types.ts";
+import { clearPendingChatSendForRun, savePendingChatSendToStorage } from "../chat/draft-storage.ts";
 import { extractText } from "../chat/message-extract.ts";
 import { generateUUID } from "../uuid.ts";
 
@@ -23,26 +24,43 @@ async function pollChatRunStatus(params: {
   await sleep(400);
 
   const startedAt = Date.now();
-  const maxMs = 120_000;
-  while (
-    state.client &&
-    state.connected &&
-    state.chatRunId === runId &&
-    Date.now() - startedAt < maxMs
-  ) {
+  // Default to 2 minutes, but extend up to a cap if the gateway reports a longer
+  // run window (expiresAtMs). This avoids incorrectly timing out long runs.
+  const DEFAULT_MAX_MS = 120_000;
+  const MAX_CAP_MS = 15 * 60_000;
+  let deadlineMs = startedAt + DEFAULT_MAX_MS;
+  if (typeof state.chatRunExpiresAtMs === "number") {
+    deadlineMs = Math.max(deadlineMs, state.chatRunExpiresAtMs + 5_000);
+  }
+  deadlineMs = Math.min(deadlineMs, startedAt + MAX_CAP_MS);
+  while (state.client && state.connected && state.chatRunId === runId && Date.now() < deadlineMs) {
     try {
-      const res = await state.client.request<{ runId?: string; status?: string; summary?: string }>(
-        "chat.send",
-        {
-          sessionKey,
-          message,
-          idempotencyKey: runId,
-          attachments,
-          timeoutMs: 30_000,
-        },
-      );
+      const res = await state.client.request<{
+        runId?: string;
+        status?: string;
+        summary?: string;
+        startedAtMs?: number;
+        expiresAtMs?: number;
+        timeoutMs?: number;
+      }>("chat.send", {
+        sessionKey,
+        message,
+        idempotencyKey: runId,
+        attachments,
+        timeoutMs: 30_000,
+      });
+
+      if (typeof res?.startedAtMs === "number") {
+        state.chatRunStartedAtMs = res.startedAtMs;
+      }
+      if (typeof res?.expiresAtMs === "number") {
+        state.chatRunExpiresAtMs = res.expiresAtMs;
+        deadlineMs = Math.max(deadlineMs, res.expiresAtMs + 5_000);
+        deadlineMs = Math.min(deadlineMs, startedAt + MAX_CAP_MS);
+      }
 
       if (res?.status === "ok") {
+        clearPendingChatSendForRun(sessionKey, runId);
         await loadChatHistory(state);
 
         // If events/history didn't yield an assistant message yet, fall back to any
@@ -60,13 +78,18 @@ async function pollChatRunStatus(params: {
         }
 
         state.chatRunId = null;
+        state.chatRunStartedAtMs = null;
+        state.chatRunExpiresAtMs = null;
         state.chatStream = null;
         state.chatStreamStartedAt = null;
         return;
       }
 
       if (res?.status === "error") {
+        clearPendingChatSendForRun(sessionKey, runId);
         state.chatRunId = null;
+        state.chatRunStartedAtMs = null;
+        state.chatRunExpiresAtMs = null;
         state.chatStream = null;
         state.chatStreamStartedAt = null;
         state.lastError = res?.summary ?? "chat error";
@@ -76,7 +99,32 @@ async function pollChatRunStatus(params: {
       // Best-effort; keep polling until timeout or disconnect.
     }
 
-    await sleep(750);
+    await sleep(1_250);
+  }
+
+  // If we exit the poll loop (timeout/disconnect/run changed) but the UI is still
+  // stuck thinking this run is active, clear it so the user can continue.
+  if (state.chatRunId === runId) {
+    const now = Date.now();
+    const expiresAtMs = state.chatRunExpiresAtMs;
+
+    // If the gateway told us the run can still be active, don't clear it.
+    // Keep the stop button/progress UI available.
+    if (typeof expiresAtMs === "number" && now < expiresAtMs) {
+      if (!state.lastError) {
+        state.lastError = "chat is still running; waiting for updates";
+      }
+      return;
+    }
+
+    state.chatRunId = null;
+    state.chatRunStartedAtMs = null;
+    state.chatRunExpiresAtMs = null;
+    state.chatStream = null;
+    state.chatStreamStartedAt = null;
+    if (!state.lastError) {
+      state.lastError = "chat status timed out; refresh recommended";
+    }
   }
 }
 
@@ -91,6 +139,8 @@ export type ChatState = {
   chatMessage: string;
   chatAttachments: ChatAttachment[];
   chatRunId: string | null;
+  chatRunStartedAtMs: number | null;
+  chatRunExpiresAtMs: number | null;
   chatStream: string | null;
   chatStreamStartedAt: number | null;
   lastError: string | null;
@@ -120,21 +170,45 @@ export async function loadChatHistory(state: ChatState) {
     );
     const nextMessages = Array.isArray(res.messages) ? res.messages : [];
 
+    const sig = (m: unknown) => {
+      const roleRaw = (m as { role?: unknown })?.role;
+      const role = typeof roleRaw === "string" ? roleRaw : "";
+      const text = extractText(m);
+      return `${role}::${typeof text === "string" ? text.trim() : ""}`;
+    };
+
+    const mergeRecentTail = (serverMessages: unknown[], localMessages: unknown[]) => {
+      const now = Date.now();
+      const RECENT_MS = 2 * 60_000;
+      const tail = localMessages.slice(-5);
+      const serverTail = serverMessages.slice(-50);
+      const serverSigs = new Set(serverTail.map(sig).filter(Boolean));
+      const merged = [...serverMessages];
+      const appended = new Set<string>();
+      for (const m of tail) {
+        const timestamp = (m as { timestamp?: unknown })?.timestamp;
+        if (typeof timestamp !== "number" || now - timestamp > RECENT_MS) {
+          continue;
+        }
+        const s = sig(m);
+        if (!s || serverSigs.has(s) || appended.has(s)) {
+          continue;
+        }
+        merged.push(m);
+        appended.add(s);
+      }
+      return merged;
+    };
+
     // Avoid clobbering optimistic/local messages with stale history (common right after a
     // streaming run final event, where persistence can lag a bit).
     if (state.chatMessages.length > 0 && nextMessages.length > 0) {
       const prevTail = state.chatMessages.slice(-5);
       const nextTail = nextMessages.slice(-20);
-      const sig = (m: unknown) => {
-        const roleRaw = (m as { role?: unknown })?.role;
-        const role = typeof roleRaw === "string" ? roleRaw : "";
-        const text = extractText(m);
-        return `${role}::${typeof text === "string" ? text.trim() : ""}`;
-      };
       const nextSigs = new Set(nextTail.map(sig));
       const hasOverlap = prevTail.some((m) => nextSigs.has(sig(m)));
       if (hasOverlap || nextMessages.length >= state.chatMessages.length) {
-        state.chatMessages = nextMessages;
+        state.chatMessages = mergeRecentTail(nextMessages, state.chatMessages);
       }
     } else if (nextMessages.length > 0 || state.chatMessages.length === 0) {
       state.chatMessages = nextMessages;
@@ -219,8 +293,12 @@ export async function sendChatMessage(
   state.lastError = null;
   const runId = generateUUID();
   state.chatRunId = runId;
+  state.chatRunStartedAtMs = now;
+  state.chatRunExpiresAtMs = null;
   state.chatStream = "";
   state.chatStreamStartedAt = now;
+
+  savePendingChatSendToStorage(state.sessionKey, { runId, text: msg, ts: now });
 
   // Convert attachments to API format
   const apiAttachments = hasAttachments
@@ -240,12 +318,25 @@ export async function sendChatMessage(
     : undefined;
 
   try {
-    await state.client.request("chat.send", {
+    const res = await state.client.request<{
+      runId?: string;
+      status?: string;
+      startedAtMs?: number;
+      expiresAtMs?: number;
+      timeoutMs?: number;
+    }>("chat.send", {
       sessionKey: state.sessionKey,
       message: msg,
       idempotencyKey: runId,
       attachments: apiAttachments,
     });
+
+    if (typeof res?.startedAtMs === "number") {
+      state.chatRunStartedAtMs = res.startedAtMs;
+    }
+    if (typeof res?.expiresAtMs === "number") {
+      state.chatRunExpiresAtMs = res.expiresAtMs;
+    }
 
     // If the gateway doesn't emit chat events (or the connection drops mid-run),
     // poll for completion so the UI can recover instead of staying stuck.
@@ -260,7 +351,10 @@ export async function sendChatMessage(
     return runId;
   } catch (err) {
     const error = String(err);
+    clearPendingChatSendForRun(state.sessionKey, runId);
     state.chatRunId = null;
+    state.chatRunStartedAtMs = null;
+    state.chatRunExpiresAtMs = null;
     state.chatStream = null;
     state.chatStreamStartedAt = null;
     state.lastError = error;
@@ -321,19 +415,34 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
       }
     }
   } else if (payload.state === "final") {
+    if (payload.runId) {
+      clearPendingChatSendForRun(state.sessionKey, payload.runId);
+    }
     if (payload.message && shouldAppendMessage(state.chatMessages, payload.message)) {
       state.chatMessages = [...state.chatMessages, payload.message];
     }
     state.chatStream = null;
     state.chatRunId = null;
+    state.chatRunStartedAtMs = null;
+    state.chatRunExpiresAtMs = null;
     state.chatStreamStartedAt = null;
   } else if (payload.state === "aborted") {
+    if (payload.runId) {
+      clearPendingChatSendForRun(state.sessionKey, payload.runId);
+    }
     state.chatStream = null;
     state.chatRunId = null;
+    state.chatRunStartedAtMs = null;
+    state.chatRunExpiresAtMs = null;
     state.chatStreamStartedAt = null;
   } else if (payload.state === "error") {
+    if (payload.runId) {
+      clearPendingChatSendForRun(state.sessionKey, payload.runId);
+    }
     state.chatStream = null;
     state.chatRunId = null;
+    state.chatRunStartedAtMs = null;
+    state.chatRunExpiresAtMs = null;
     state.chatStreamStartedAt = null;
     state.lastError = payload.errorMessage ?? "chat error";
     if (payload.errorMessage) {

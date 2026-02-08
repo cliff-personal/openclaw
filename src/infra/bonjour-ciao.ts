@@ -3,7 +3,10 @@ import { formatBonjourError } from "./bonjour-errors.js";
 
 export function ignoreCiaoCancellationRejection(reason: unknown): boolean {
   const message = formatBonjourError(reason).toUpperCase();
-  if (!message.includes("CIAO ANNOUNCEMENT CANCELLED")) {
+  if (
+    !message.includes("CIAO ANNOUNCEMENT CANCELLED") &&
+    !message.includes("NO INTERFACES FOUND")
+  ) {
     return false;
   }
   logDebug(`bonjour: ignoring unhandled ciao rejection: ${formatBonjourError(reason)}`);

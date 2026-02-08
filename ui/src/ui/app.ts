@@ -135,6 +135,9 @@ export class OpenClawApp extends LitElement {
   @state() chatStream: string | null = null;
   @state() chatStreamStartedAt: number | null = null;
   @state() chatRunId: string | null = null;
+  @state() chatRunStartedAtMs: number | null = null;
+  @state() chatRunExpiresAtMs: number | null = null;
+  @state() chatProcessingNowMs: number = Date.now();
   @state() compactionStatus: CompactionStatus | null = null;
   @state() chatAvatarUrl: string | null = null;
   @state() chatThinkingLevel: string | null = null;
@@ -332,6 +335,7 @@ export class OpenClawApp extends LitElement {
   private chatScrollTimeout: number | null = null;
   private chatHasAutoScrolled = false;
   private chatUserNearBottom = true;
+  private chatProcessingTimer: number | null = null;
   @state() chatNewMessagesBelow = false;
   private nodesPollInterval: number | null = null;
   private logsPollInterval: number | null = null;
@@ -361,12 +365,31 @@ export class OpenClawApp extends LitElement {
   }
 
   disconnectedCallback() {
+    if (this.chatProcessingTimer != null) {
+      clearInterval(this.chatProcessingTimer);
+      this.chatProcessingTimer = null;
+    }
     handleDisconnected(this as unknown as Parameters<typeof handleDisconnected>[0]);
     super.disconnectedCallback();
   }
 
   protected updated(changed: Map<PropertyKey, unknown>) {
     handleUpdated(this as unknown as Parameters<typeof handleUpdated>[0], changed);
+
+    const chatBusy =
+      this.tab === "chat" &&
+      (this.chatSending || Boolean(this.chatRunId) || this.chatStream !== null);
+    if (chatBusy) {
+      if (this.chatProcessingTimer == null) {
+        this.chatProcessingNowMs = Date.now();
+        this.chatProcessingTimer = window.setInterval(() => {
+          this.chatProcessingNowMs = Date.now();
+        }, 500);
+      }
+    } else if (this.chatProcessingTimer != null) {
+      clearInterval(this.chatProcessingTimer);
+      this.chatProcessingTimer = null;
+    }
 
     if (changed.has("sessionKey") && !this.chatMessage) {
       const restored = loadChatDraftFromStorageInternal(this.sessionKey);
