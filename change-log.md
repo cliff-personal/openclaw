@@ -16,8 +16,8 @@ Date: 2026-02-08
 
 ## Root cause & fix
 
-- Root cause: Control UI relies on `event: "chat"` (`delta/final/error/aborted`) to clear `chatRunId` and render replies. When the gateway returns `status:"started"` but the event stream never delivers (common with gateway exit code 137 / restart / disconnect), the UI stays stuck in “Processing…” and Send appears to do nothing.
-- Fix: Remove the old forced `deliver:false` from Control UI sends, and add a best-effort completion watchdog (polling `chat.send` with the same `idempotencyKey` until `ok/error`, then refresh history + clear busy state). Also clear run state immediately on socket close.
+- Root cause: Control UI relies on `event: "chat"` (`delta/final/error/aborted`) to clear `chatRunId` and render replies. In practice, most chat events are emitted via `nodeSendToSession(sessionKey, "chat", ...)`, which requires the client to subscribe to that session via `node.event` → `chat.subscribe`. Without that subscription, the gateway still returns `status:"started"`, but the UI sees no `event:"chat"` frames and appears unresponsive.
+- Fix: Subscribe the Control UI connection to the active session before sending (`chat.subscribe`), remove the old forced `deliver:false`, and add a best-effort completion watchdog (poll `chat.send` by `idempotencyKey` until `ok/error`, then refresh history + clear busy state). Also clear run state immediately on socket close.
 
 ## Files changed (high level)
 
