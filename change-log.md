@@ -14,7 +14,7 @@ Date: 2026-02-08
 - Control UI Chat: clear in-flight run state on WebSocket `onClose` so the UI doesn't stay busy after disconnects.
 - Control UI Chat: persist the compose draft in localStorage (per sessionKey) so a refresh doesn't wipe unsent text.
 - Gateway/UI: include a best-effort `summary` in `chat.send` completion polling responses so the UI can render something even if `chat` events/transcript lag.
-- Dev tooling: isolated debug gateway now writes `gateway.auth.token` into the isolated config so the debug gateway can start in token-auth mode.
+- Dev tooling: remove the isolated debug gateway (18790) VS Code launch/tasks; keep a single gateway debug target on 18789 using the default environment/config.
 
 ## Root cause & fix
 

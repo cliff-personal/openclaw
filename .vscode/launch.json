@@ -2,22 +2,8 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "OpenClaw: CLI (debug)",
-      "type": "pwa-node",
-      "request": "launch",
-      "cwd": "${workspaceFolder:openclaw}",
-      "program": "${workspaceFolder:openclaw}/openclaw.mjs",
-      "args": ["--help"],
-      "runtimeArgs": ["--enable-source-maps"],
-      "preLaunchTask": "OpenClaw: build (tsdown)",
-      "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"],
-      "resolveSourceMapLocations": ["${workspaceFolder:openclaw}/**", "!**/node_modules/**"],
-      "outFiles": ["${workspaceFolder:openclaw}/dist/**/*.js"]
-    },
-    {
       "name": "OpenClaw: Gateway (debug, 18789)",
-      "type": "pwa-node",
+      "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder:openclaw}",
       "program": "${workspaceFolder:openclaw}/openclaw.mjs",
@@ -25,37 +11,6 @@
       "runtimeArgs": ["--enable-source-maps"],
       "preLaunchTask": "OpenClaw: build (tsdown)",
       "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"],
-      "resolveSourceMapLocations": ["${workspaceFolder:openclaw}/**", "!**/node_modules/**"],
-      "outFiles": ["${workspaceFolder:openclaw}/dist/**/*.js"]
-    },
-    {
-      "name": "OpenClaw: Gateway (debug, isolated state, 18790)",
-      "type": "pwa-node",
-      "request": "launch",
-      "cwd": "${workspaceFolder:openclaw}",
-      "program": "${workspaceFolder:openclaw}/openclaw.mjs",
-      "args": ["gateway", "--port", "18790", "--verbose"],
-      "env": {
-        "OPENCLAW_STATE_DIR": "${env:HOME}/.openclaw-debug",
-        "OPENCLAW_CONFIG_PATH": "${env:HOME}/.openclaw-debug/openclaw.json",
-        "CLAWDBOT_DEBUG_TOOLS": "1"
-      },
-      "runtimeArgs": ["--enable-source-maps", "--trace-warnings"],
-      "preLaunchTask": "OpenClaw: prepare (isolated debug gateway)",
-      "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"],
-      "resolveSourceMapLocations": ["${workspaceFolder:openclaw}/**", "!**/node_modules/**"],
-      "outFiles": ["${workspaceFolder:openclaw}/dist/**/*.js"]
-    },
-    {
-      "name": "OpenClaw: Attach (localhost:9229)",
-      "type": "pwa-node",
-      "request": "attach",
-      "address": "localhost",
-      "port": 9229,
-      "cwd": "${workspaceFolder:openclaw}",
-      "restart": true,
       "skipFiles": ["<node_internals>/**"],
       "resolveSourceMapLocations": ["${workspaceFolder:openclaw}/**", "!**/node_modules/**"],
       "outFiles": ["${workspaceFolder:openclaw}/dist/**/*.js"]

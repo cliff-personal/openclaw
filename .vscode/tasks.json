@@ -18,27 +18,6 @@
         "cwd": "${workspaceFolder:openclaw}"
       },
       "problemMatcher": []
-    },
-    {
-      "label": "OpenClaw: config (isolated debug gateway)",
-      "type": "shell",
-      "command": "set -euo pipefail; export OPENCLAW_STATE_DIR=\"${env:HOME}/.openclaw-debug\"; export OPENCLAW_CONFIG_PATH=\"${env:HOME}/.openclaw-debug/openclaw.json\"; mkdir -p \"$OPENCLAW_STATE_DIR\"; if [ ! -f \"$OPENCLAW_CONFIG_PATH\" ]; then echo '{}' > \"$OPENCLAW_CONFIG_PATH\"; fi; mkdir -p \"${env:HOME}/.openclaw-debug/agents/main/agent\"; if [ -f \"${env:HOME}/.openclaw/agents/main/agent/auth-profiles.json\" ]; then cp -f \"${env:HOME}/.openclaw/agents/main/agent/auth-profiles.json\" \"${env:HOME}/.openclaw-debug/agents/main/agent/auth-profiles.json\"; chmod 600 \"${env:HOME}/.openclaw-debug/agents/main/agent/auth-profiles.json\" || true; fi; corepack pnpm openclaw config set gateway.mode local && corepack pnpm openclaw config set gateway.bind loopback && corepack pnpm openclaw config set gateway.port 18790 && corepack pnpm openclaw config set gateway.auth.mode token && corepack pnpm openclaw config set gateway.auth.token 35f089832893ed4e64c959e4a68644254743d7770e783ebb && corepack pnpm openclaw config set gateway.controlUi.enabled true && corepack pnpm openclaw config set gateway.controlUi.basePath /openclaw && corepack pnpm openclaw config set gateway.controlUi.root \"${workspaceFolder:openclaw}/dist/control-ui\" && corepack pnpm openclaw config set logging.level debug && corepack pnpm openclaw config set logging.consoleLevel debug && corepack pnpm openclaw config set logging.consoleStyle compact",
-      "options": {
-        "cwd": "${workspaceFolder:openclaw}"
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "OpenClaw: prepare (isolated debug gateway)",
-      "dependsOn": [
-        "OpenClaw: build (tsdown)",
-        "OpenClaw: ui:build",
-        "OpenClaw: config (isolated debug gateway)"
-      ],
-      "dependsOrder": "sequence",
-      "type": "shell",
-      "command": "echo 'OpenClaw isolated debug gateway prepared.'",
-      "problemMatcher": []
     }
   ]
 }
