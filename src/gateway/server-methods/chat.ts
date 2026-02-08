@@ -49,6 +49,289 @@ type TranscriptAppendResult = {
   error?: string;
 };
 
+type CtxOverflowInfo = {
+  requestedTokens?: number;
+  ctxLimit?: number;
+  message: string;
+};
+
+const CTX_OVERFLOW_RE =
+  /request\s*\((\d+)\s*tokens\)\s*exceeds\s*the\s*available\s*context\s*size\s*\((\d+)\s*tokens\)/i;
+
+function parseCtxOverflowInfo(err: unknown): CtxOverflowInfo | null {
+  const message = err instanceof Error ? err.message : String(err);
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const match = CTX_OVERFLOW_RE.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+
+  const requestedTokens = Number(match[1]);
+  const ctxLimit = Number(match[2]);
+  return {
+    requestedTokens: Number.isFinite(requestedTokens) ? requestedTokens : undefined,
+    ctxLimit: Number.isFinite(ctxLimit) ? ctxLimit : undefined,
+    message: trimmed,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function coerceTranscriptMessages(values: unknown[]): Array<Record<string, unknown>> {
+  return values.filter(isRecord);
+}
+
+function coerceGatewayClientCaps(value: unknown): string[] | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  if (value.every((item) => typeof item === "string")) {
+    return value;
+  }
+  return undefined;
+}
+
+function appendTranscriptEvent(params: {
+  sessionId: string;
+  storePath: string | undefined;
+  sessionFile?: string;
+  event: Record<string, unknown>;
+}): { ok: true } | { ok: false; error: string } {
+  const transcriptPath = resolveTranscriptPath({
+    sessionId: params.sessionId,
+    storePath: params.storePath,
+    sessionFile: params.sessionFile,
+  });
+  if (!transcriptPath) {
+    return { ok: false, error: "transcript path not resolved" };
+  }
+
+  if (!fs.existsSync(transcriptPath)) {
+    const ensured = ensureTranscriptFile({ transcriptPath, sessionId: params.sessionId });
+    if (!ensured.ok) {
+      return { ok: false, error: ensured.error ?? "failed to create transcript file" };
+    }
+  }
+
+  const now = Date.now();
+  const entry = {
+    type: "event",
+    id: randomUUID().slice(0, 8),
+    timestamp: new Date(now).toISOString(),
+    event: params.event,
+  };
+
+  try {
+    fs.appendFileSync(transcriptPath, `${JSON.stringify(entry)}\n`, "utf-8");
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function buildCtxOverflowHandoff(params: {
+  previousSessionId: string;
+  newSessionId: string;
+  sessionKey: string;
+  overflow: CtxOverflowInfo;
+  lastUserMessage: string;
+  messages: Array<Record<string, unknown>>;
+}): string {
+  const maxLines = 120;
+  const maxChars = 8_000;
+
+  const ctxLines = [
+    ...(params.overflow.ctxLimit ? [`CTX limit: ${params.overflow.ctxLimit}`] : []),
+    ...(params.overflow.requestedTokens
+      ? [`Requested tokens: ${params.overflow.requestedTokens}`]
+      : []),
+  ];
+
+  const recent = params.messages.slice(-12);
+  const recentLines = recent
+    .map((msg) => {
+      const role = typeof msg.role === "string" ? msg.role : "unknown";
+      const content = Array.isArray(msg.content) ? msg.content : [];
+      const firstText = content.find((part: unknown) => {
+        return (
+          Boolean(part) &&
+          typeof part === "object" &&
+          (part as { type?: unknown }).type === "text" &&
+          typeof (part as { text?: unknown }).text === "string"
+        );
+      }) as { text?: string } | undefined;
+      const text = (firstText?.text ?? "").replaceAll(/\s+/g, " ").trim();
+      if (!text) {
+        return null;
+      }
+      const clipped = text.length > 240 ? text.slice(0, 237) + "…" : text;
+      return `- ${role}: ${clipped}`;
+    })
+    .filter((line): line is string => Boolean(line));
+
+  const parts = [
+    "[Handoff / Continuation]",
+    "We hit local model context overflow. Continue in this new session.",
+    "",
+    `Previous sessionId: ${params.previousSessionId}`,
+    `New sessionId: ${params.newSessionId}`,
+    `SessionKey: ${params.sessionKey}`,
+    ...ctxLines,
+    "",
+    ...(recentLines.length > 0 ? ["Recent messages (most recent last):", ...recentLines, ""] : []),
+    "Now, answer this user request:",
+    params.lastUserMessage.trim(),
+  ];
+
+  const joined = parts.join("\n");
+  if (joined.length <= maxChars && parts.length <= maxLines) {
+    return joined;
+  }
+
+  const capped = joined.slice(0, maxChars);
+  return capped.endsWith("\n") ? capped : `${capped}\n`;
+}
+
+async function attemptCtxOverflowRolloverAndRetry(params: {
+  sessionKey: string;
+  storePath: string | undefined;
+  canonicalKey: string;
+  existingEntry: unknown;
+  sessionIdForRun: string;
+  runId: string;
+  overflow: CtxOverflowInfo;
+  parsedMessage: string;
+  context: Pick<
+    GatewayRequestContext,
+    "removeChatRun" | "addChatRun" | "chatAbortControllers" | "registerToolEventRecipient"
+  >;
+  client: unknown;
+  ctx: MsgContext;
+  cfg: unknown;
+  dispatcher: unknown;
+  abortController: AbortController;
+  parsedImages: ChatImageContent[];
+  onModelSelected: ReturnType<typeof createReplyPrefixOptions>["onModelSelected"];
+  agentRunStartedRef: { value: boolean };
+}): Promise<void> {
+  if (!params.storePath) {
+    throw new Error(params.overflow.message);
+  }
+
+  const { entry: latestEntry } = loadSessionEntry(params.sessionKey);
+  if (latestEntry?.sessionFile) {
+    throw new Error(params.overflow.message);
+  }
+
+  const previousSessionId =
+    (latestEntry?.sessionId as string | undefined) ??
+    (params.existingEntry as { sessionId?: unknown } | undefined)?.sessionId?.toString?.() ??
+    params.sessionIdForRun;
+  const newSessionId = randomUUID();
+
+  appendTranscriptEvent({
+    sessionId: previousSessionId,
+    storePath: params.storePath,
+    event: {
+      kind: "ctx_overflow",
+      message: params.overflow.message,
+      ctxLimit: params.overflow.ctxLimit,
+      requestedTokens: params.overflow.requestedTokens,
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      timestamp: Date.now(),
+    },
+  });
+
+  await updateSessionStore(params.storePath, (store) => {
+    const existing = store[params.canonicalKey] as Parameters<typeof mergeSessionEntry>[0];
+    store[params.canonicalKey] = mergeSessionEntry(existing, {
+      sessionId: newSessionId,
+      updatedAt: Date.now(),
+      compactionCount: (existing?.compactionCount ?? 0) + 1,
+    });
+  });
+
+  const transcriptPath = resolveTranscriptPath({
+    sessionId: newSessionId,
+    storePath: params.storePath,
+  });
+  if (!transcriptPath) {
+    throw new Error("failed to resolve rollover transcript path");
+  }
+  const ensured = ensureTranscriptFile({ transcriptPath, sessionId: newSessionId });
+  if (!ensured.ok) {
+    throw new Error(ensured.error ?? "failed to create rollover transcript");
+  }
+
+  const prevRaw = readSessionMessages(previousSessionId, params.storePath);
+  const prevMessages = coerceTranscriptMessages(prevRaw);
+  const handoff = buildCtxOverflowHandoff({
+    previousSessionId,
+    newSessionId,
+    sessionKey: params.sessionKey,
+    overflow: params.overflow,
+    lastUserMessage: params.parsedMessage,
+    messages: prevMessages,
+  });
+  appendAssistantTranscriptMessage({
+    message: handoff,
+    label: "Handoff / Continuation",
+    sessionId: newSessionId,
+    storePath: params.storePath,
+    createIfMissing: true,
+  });
+
+  params.context.removeChatRun(params.sessionIdForRun, params.runId, params.sessionKey);
+  params.context.addChatRun(newSessionId, {
+    sessionKey: params.sessionKey,
+    clientRunId: params.runId,
+  });
+  const active = params.context.chatAbortControllers.get(params.runId);
+  if (active) {
+    active.sessionId = newSessionId;
+  }
+
+  await dispatchInboundMessage({
+    ctx: params.ctx,
+    cfg: params.cfg as never,
+    dispatcher: params.dispatcher as never,
+    replyOptions: {
+      runId: params.runId,
+      abortSignal: params.abortController.signal,
+      images: params.parsedImages.length > 0 ? params.parsedImages : undefined,
+      disableBlockStreaming: true,
+      onAgentRunStart: (runId) => {
+        params.agentRunStartedRef.value = true;
+        const connId =
+          typeof (params.client as { connId?: unknown } | undefined)?.connId === "string"
+            ? (params.client as { connId: string }).connId
+            : undefined;
+        const caps = coerceGatewayClientCaps(
+          (params.client as { connect?: { caps?: unknown } } | undefined)?.connect?.caps,
+        );
+        const wantsToolEvents = hasGatewayClientCap(caps, GATEWAY_CLIENT_CAPS.TOOL_EVENTS);
+        if (connId && wantsToolEvents) {
+          params.context.registerToolEventRecipient(runId, connId);
+        }
+      },
+      onModelSelected: params.onModelSelected,
+    },
+  });
+}
+
 async function ensureChatSendSessionEntry(params: {
   storePath: string | undefined;
   canonicalKey: string;
@@ -734,18 +1017,58 @@ export const chatHandlers: GatewayRequestHandlers = {
         });
       }
 
-      void dispatchPromise.catch((err) => {
+      let didAttemptCtxOverflowRollover = false;
+
+      void dispatchPromise.catch(async (err) => {
         if (didFinalizeWithoutAgentRun) {
           return;
         }
+
+        let finalErr: unknown = err;
+        const overflow = parseCtxOverflowInfo(err);
+        if (overflow && !didAttemptCtxOverflowRollover) {
+          didAttemptCtxOverflowRollover = true;
+          try {
+            const agentRunStartedRef = { value: agentRunStarted };
+            await attemptCtxOverflowRolloverAndRetry({
+              sessionKey: p.sessionKey,
+              storePath,
+              canonicalKey,
+              existingEntry: entry,
+              sessionIdForRun,
+              runId: clientRunId,
+              overflow,
+              parsedMessage,
+              context: {
+                removeChatRun: context.removeChatRun,
+                addChatRun: context.addChatRun,
+                chatAbortControllers: context.chatAbortControllers,
+                registerToolEventRecipient: context.registerToolEventRecipient,
+              },
+              client,
+              ctx,
+              cfg,
+              dispatcher,
+              abortController,
+              parsedImages,
+              onModelSelected,
+              agentRunStartedRef,
+            });
+            agentRunStarted = agentRunStartedRef.value;
+            return;
+          } catch (error_) {
+            finalErr = error_;
+          }
+        }
+
         context.logGateway.warn(
-          `chat.send failed sessionKey=${p.sessionKey} runId=${clientRunId}: ${formatForLog(err)}`,
+          `chat.send failed sessionKey=${p.sessionKey} runId=${clientRunId}: ${formatForLog(finalErr)}`,
         );
-        const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
+        const error = errorShape(ErrorCodes.UNAVAILABLE, String(finalErr));
         const payload = {
           runId: clientRunId,
           status: "error" as const,
-          summary: String(err),
+          summary: String(finalErr),
         };
         context.dedupe.set(`chat:${clientRunId}`, {
           ts: Date.now(),
@@ -757,7 +1080,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           context,
           runId: clientRunId,
           sessionKey: p.sessionKey,
-          errorMessage: String(err),
+          errorMessage: String(finalErr),
         });
 
         context.chatAbortControllers.delete(clientRunId);

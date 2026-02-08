@@ -4,7 +4,7 @@ Date: 2026-02-08
 
 ## Summary
 
-- WebChat/Control UI: recover from context overflow by resetting session and auto-retrying (capped).
+- Gateway: recover from local model context overflow by rolling over to a new session (inject a compact handoff + retry once).
 - Control UI: improve chat compose UX with input history (localStorage), up/down navigation, and clear “Processing…” / disabled Send while busy.
 - Control UI: render assistant replies immediately on `chat` `final`/`error` events (append message locally), and avoid `chat.history` overwriting newer local messages right after send (fixes “blank until refresh” reports).
 - Gateway: add more debug/warn/error logs around `chat.send` for easier troubleshooting.
@@ -33,6 +33,7 @@ Date: 2026-02-08
 ## Files changed (high level)
 
 - Backend: `src/gateway/server-methods/chat.ts`
+- Backend tests: `src/gateway/server-methods/chat.ctx-overflow.test.ts`
 - UI: `ui/src/ui/controllers/chat.ts`, `ui/src/ui/app-gateway.ts`
 
 ## Additional changes

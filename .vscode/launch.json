@@ -21,37 +21,6 @@
       ]
     },
     {
-      "name": "OpenClaw: Gateway (TSX debug, isolated, 18790)",
-      "type": "node",
-      "request": "launch",
-      "cwd": "${workspaceFolder:openclaw}",
-      "env": {
-        "OPENCLAW_NO_RESPAWN": "1",
-        "OPENCLAW_CONFIG_PATH": "${workspaceFolder:openclaw}/.tmp/vscode-gateway/openclaw.json",
-        "OPENCLAW_STATE_DIR": "${workspaceFolder:openclaw}/.tmp/vscode-gateway/state",
-        "HOME": "${workspaceFolder:openclaw}/.tmp/vscode-gateway/home"
-      },
-      "program": "${workspaceFolder:openclaw}/src/entry.ts",
-      "args": [
-        "gateway",
-        "--port",
-        "18790",
-        "--bind",
-        "loopback",
-        "--dev",
-        "--allow-unconfigured",
-        "--verbose"
-      ],
-      "runtimeArgs": ["--enable-source-maps", "--import", "tsx"],
-      "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"],
-      "resolveSourceMapLocations": [
-        "${workspaceFolder:openclaw}/src/**",
-        "${workspaceFolder:openclaw}/ui/**",
-        "!**/node_modules/**"
-      ]
-    },
-    {
       "name": "OpenClaw: Control UI (Chrome, 5173)",
       "type": "pwa-chrome",
       "request": "launch",
