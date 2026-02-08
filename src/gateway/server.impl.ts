@@ -45,6 +45,7 @@ import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import { NodeRegistry } from "./node-registry.js";
+import { ErrorCodes, errorShape } from "./protocol/index.js";
 import { createChannelManager } from "./server-channels.js";
 import { createAgentEventHandler } from "./server-chat.js";
 import { createGatewayCloseHandler } from "./server-close.js";
@@ -450,6 +451,21 @@ export async function startGatewayServer(
       resolveSessionKeyForRun,
       clearAgentRunContext,
       toolEventRecipients,
+      onChatRunFinal: ({ clientRunId, ok, summary, errorMessage }) => {
+        chatAbortControllers.delete(clientRunId);
+        dedupe.set(`chat:${clientRunId}`, {
+          ts: Date.now(),
+          ok,
+          payload: {
+            runId: clientRunId,
+            status: ok ? ("ok" as const) : ("error" as const),
+            summary: ok ? summary : errorMessage,
+          },
+          error: ok
+            ? undefined
+            : errorShape(ErrorCodes.UNAVAILABLE, errorMessage?.trim() || "chat error"),
+        });
+      },
     }),
   );
 

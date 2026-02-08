@@ -306,6 +306,70 @@ describe("gateway server chat", () => {
     }
   });
 
+  test("chat.send polling completes on lifecycle end", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-gw-"));
+    try {
+      testState.sessionStorePath = path.join(dir, "sessions.json");
+      await writeSessionStore({
+        entries: {
+          main: {
+            sessionId: "sess-main",
+            updatedAt: Date.now(),
+          },
+        },
+      });
+
+      const runId = "idem-poll-1";
+      const startRes = await rpcReq(ws, "chat.send", {
+        sessionKey: "main",
+        message: "hello",
+        idempotencyKey: runId,
+      });
+      expect(startRes.ok).toBe(true);
+
+      const poll1 = await rpcReq<{ status?: string }>(ws, "chat.send", {
+        sessionKey: "main",
+        message: "hello",
+        idempotencyKey: runId,
+      });
+      expect(poll1.ok).toBe(true);
+      expect(poll1.payload?.status).toBe("in_flight");
+
+      registerAgentRunContext(runId, { sessionKey: "main" });
+      emitAgentEvent({
+        runId,
+        stream: "assistant",
+        data: { text: "hi" },
+      });
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "end" },
+      });
+
+      let finalRes:
+        | Awaited<ReturnType<typeof rpcReq<{ status?: string; summary?: string }>>>
+        | undefined;
+      for (let i = 0; i < 100; i += 1) {
+        finalRes = await rpcReq(ws, "chat.send", {
+          sessionKey: "main",
+          message: "hello",
+          idempotencyKey: runId,
+        });
+        if (finalRes.ok && finalRes.payload?.status === "ok") {
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 5));
+      }
+
+      expect(finalRes?.ok).toBe(true);
+      expect(finalRes?.payload?.status).toBe("ok");
+    } finally {
+      testState.sessionStorePath = undefined;
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("routes chat.send slash commands without agent runs", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-gw-"));
     try {

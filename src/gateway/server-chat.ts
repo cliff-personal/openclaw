@@ -215,6 +215,14 @@ export type AgentEventHandlerOptions = {
   resolveSessionKeyForRun: (runId: string) => string | undefined;
   clearAgentRunContext: (runId: string) => void;
   toolEventRecipients: ToolEventRecipientRegistry;
+  onChatRunFinal?: (params: {
+    runId: string;
+    clientRunId: string;
+    sessionKey: string;
+    ok: boolean;
+    summary?: string;
+    errorMessage?: string;
+  }) => void;
 };
 
 export function createAgentEventHandler({
@@ -226,6 +234,7 @@ export function createAgentEventHandler({
   resolveSessionKeyForRun,
   clearAgentRunContext,
   toolEventRecipients,
+  onChatRunFinal,
 }: AgentEventHandlerOptions) {
   const emitChatDelta = (sessionKey: string, clientRunId: string, seq: number, text: string) => {
     chatRunState.buffers.set(clientRunId, text);
@@ -282,7 +291,7 @@ export function createAgentEventHandler({
         broadcast("chat", payload);
       }
       nodeSendToSession(sessionKey, "chat", payload);
-      return;
+      return { ok: true as const, text };
     }
     const payload = {
       runId: clientRunId,
@@ -293,6 +302,10 @@ export function createAgentEventHandler({
     };
     broadcast("chat", payload);
     nodeSendToSession(sessionKey, "chat", payload);
+    return {
+      ok: false as const,
+      errorMessage: error ? formatForLog(error) : undefined,
+    };
   };
 
   const resolveToolVerboseLevel = (runId: string, sessionKey?: string) => {
@@ -378,21 +391,37 @@ export function createAgentEventHandler({
             clearAgentRunContext(evt.runId);
             return;
           }
-          emitChatFinal(
+          const final = emitChatFinal(
             finished.sessionKey,
             finished.clientRunId,
             evt.seq,
             lifecyclePhase === "error" ? "error" : "done",
             evt.data?.error,
           );
+          onChatRunFinal?.({
+            runId: evt.runId,
+            clientRunId: finished.clientRunId,
+            sessionKey: finished.sessionKey,
+            ok: final.ok,
+            summary: final.ok ? final.text : undefined,
+            errorMessage: final.ok ? undefined : final.errorMessage,
+          });
         } else {
-          emitChatFinal(
+          const final = emitChatFinal(
             sessionKey,
             evt.runId,
             evt.seq,
             lifecyclePhase === "error" ? "error" : "done",
             evt.data?.error,
           );
+          onChatRunFinal?.({
+            runId: evt.runId,
+            clientRunId: evt.runId,
+            sessionKey,
+            ok: final.ok,
+            summary: final.ok ? final.text : undefined,
+            errorMessage: final.ok ? undefined : final.errorMessage,
+          });
         }
       } else if (isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         chatRunState.abortedRuns.delete(clientRunId);

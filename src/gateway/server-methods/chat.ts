@@ -70,45 +70,6 @@ async function ensureChatSendSessionEntry(params: {
   });
 }
 
-function resolveUserTranscriptText(params: {
-  parsedMessage: string;
-  rawMessage: string;
-  attachmentCount: number;
-}): string {
-  const trimmed = params.parsedMessage.trim();
-  if (trimmed) {
-    return trimmed;
-  }
-  if (params.attachmentCount > 0) {
-    const plural = params.attachmentCount === 1 ? "" : "s";
-    return `[${params.attachmentCount} attachment${plural}]`;
-  }
-  return params.rawMessage;
-}
-
-function maybeAppendUserTranscript(params: {
-  log: { warn: (msg: string) => void };
-  message: string;
-  sessionId: string;
-  storePath: string | undefined;
-  sessionFile?: string;
-}): void {
-  const text = params.message.trim();
-  if (!text) {
-    return;
-  }
-  const appended = appendUserTranscriptMessage({
-    message: text,
-    sessionId: params.sessionId,
-    storePath: params.storePath,
-    sessionFile: params.sessionFile,
-    createIfMissing: true,
-  });
-  if (!appended.ok) {
-    params.log.warn(`webchat transcript user append failed: ${appended.error ?? "unknown error"}`);
-  }
-}
-
 function resolveTranscriptPath(params: {
   sessionId: string;
   storePath: string | undefined;
@@ -186,58 +147,6 @@ function appendAssistantTranscriptMessage(params: {
     timestamp: now,
     stopReason: "injected",
     usage: { input: 0, output: 0, totalTokens: 0 },
-  };
-  const transcriptEntry = {
-    type: "message",
-    id: messageId,
-    timestamp: new Date(now).toISOString(),
-    message: messageBody,
-  };
-
-  try {
-    fs.appendFileSync(transcriptPath, `${JSON.stringify(transcriptEntry)}\n`, "utf-8");
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-
-  return { ok: true, messageId, message: transcriptEntry.message };
-}
-
-function appendUserTranscriptMessage(params: {
-  message: string;
-  sessionId: string;
-  storePath: string | undefined;
-  sessionFile?: string;
-  createIfMissing?: boolean;
-}): TranscriptAppendResult {
-  const transcriptPath = resolveTranscriptPath({
-    sessionId: params.sessionId,
-    storePath: params.storePath,
-    sessionFile: params.sessionFile,
-  });
-  if (!transcriptPath) {
-    return { ok: false, error: "transcript path not resolved" };
-  }
-
-  if (!fs.existsSync(transcriptPath)) {
-    if (!params.createIfMissing) {
-      return { ok: false, error: "transcript file not found" };
-    }
-    const ensured = ensureTranscriptFile({
-      transcriptPath,
-      sessionId: params.sessionId,
-    });
-    if (!ensured.ok) {
-      return { ok: false, error: ensured.error ?? "failed to create transcript file" };
-    }
-  }
-
-  const now = Date.now();
-  const messageId = randomUUID().slice(0, 8);
-  const messageBody: Record<string, unknown> = {
-    role: "user",
-    content: [{ type: "text", text: params.message }],
-    timestamp: now,
   };
   const transcriptEntry = {
     type: "message",
@@ -578,19 +487,6 @@ export const chatHandlers: GatewayRequestHandlers = {
         expiresAtMs: resolveChatRunExpiresAtMs({ now, timeoutMs }),
       });
 
-      // Append the user's message to the transcript so `chat.history` can reflect it immediately.
-      maybeAppendUserTranscript({
-        log: context.logGateway,
-        message: resolveUserTranscriptText({
-          parsedMessage,
-          rawMessage,
-          attachmentCount: normalizedAttachments.length,
-        }),
-        sessionId: sessionIdForRun,
-        storePath,
-        sessionFile: entry?.sessionFile,
-      });
-
       // Map agent bus events (keyed by sessionId) to chat events (keyed by clientRunId).
       // Without this, the UI may never receive `event:"chat"` frames (or will receive them
       // under the wrong runId), causing the chat page to appear stuck.
@@ -609,6 +505,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         p.thinking && trimmedMessage && !trimmedMessage.startsWith("/"),
       );
       const commandBody = injectThinking ? `/think ${p.thinking} ${parsedMessage}` : parsedMessage;
+      const isSlashCommand = trimmedMessage.startsWith("/");
       const clientInfo = client?.connect?.client;
       // Inject timestamp so agents know the current date/time.
       // Only BodyForAgent gets the timestamp — Body stays raw for UI display.
@@ -644,6 +541,9 @@ export const chatHandlers: GatewayRequestHandlers = {
         channel: INTERNAL_MESSAGE_CHANNEL,
       });
       const finalReplyParts: string[] = [];
+
+      let agentRunStarted = false;
+      let didFinalizeWithoutAgentRun = false;
       const dispatcher = createReplyDispatcher({
         ...prefixOptions,
         onError: (err) => {
@@ -654,15 +554,79 @@ export const chatHandlers: GatewayRequestHandlers = {
             return;
           }
           const text = payload.text?.trim() ?? "";
-          if (!text) {
+
+          // Collect best-effort summary for command-only runs.
+          if (text) {
+            finalReplyParts.push(text);
+          }
+
+          // If the message never started an agent run (e.g. slash commands handled locally),
+          // we must finalize the chat run here so the UI sees a `chat.final`.
+          if (agentRunStarted || didFinalizeWithoutAgentRun) {
             return;
           }
-          finalReplyParts.push(text);
+          didFinalizeWithoutAgentRun = true;
+
+          const combinedReply = finalReplyParts
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .join("\n\n")
+            .trim();
+
+          let message: Record<string, unknown> | undefined;
+          if (combinedReply) {
+            const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(
+              p.sessionKey,
+            );
+            const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
+            const appended = appendAssistantTranscriptMessage({
+              message: combinedReply,
+              sessionId,
+              storePath: latestStorePath,
+              sessionFile: latestEntry?.sessionFile,
+              createIfMissing: true,
+            });
+            if (appended.ok) {
+              message = appended.message;
+            } else {
+              context.logGateway.warn(
+                `webchat transcript append failed: ${appended.error ?? "unknown error"}`,
+              );
+              const now = Date.now();
+              message = {
+                role: "assistant",
+                content: [{ type: "text", text: combinedReply }],
+                timestamp: now,
+                stopReason: "injected",
+                usage: { input: 0, output: 0, totalTokens: 0 },
+              };
+            }
+          }
+
+          broadcastChatFinal({
+            context,
+            runId: clientRunId,
+            sessionKey: p.sessionKey,
+            message,
+          });
+
+          context.dedupe.set(`chat:${clientRunId}`, {
+            ts: Date.now(),
+            ok: true,
+            payload: {
+              runId: clientRunId,
+              status: "ok" as const,
+              summary: combinedReply || undefined,
+            },
+          });
+
+          // No lifecycle events will arrive for command-only runs.
+          context.chatAbortControllers.delete(clientRunId);
+          context.removeChatRun(sessionIdForRun, clientRunId, p.sessionKey);
         },
       });
 
-      let agentRunStarted = false;
-      void dispatchInboundMessage({
+      const dispatchPromise = dispatchInboundMessage({
         ctx,
         cfg,
         dispatcher,
@@ -684,101 +648,102 @@ export const chatHandlers: GatewayRequestHandlers = {
           },
           onModelSelected,
         },
-      })
-        .then(() => {
-          const bestEffortSummary = (() => {
-            const combinedReply = finalReplyParts
-              .map((part) => part.trim())
-              .filter(Boolean)
-              .join("\n\n")
-              .trim();
-            if (combinedReply) {
-              return combinedReply;
-            }
-            const buffered = context.chatRunBuffers.get(clientRunId)?.trim() ?? "";
-            return buffered || undefined;
-          })();
-          if (!agentRunStarted) {
-            const combinedReply = finalReplyParts
-              .map((part) => part.trim())
-              .filter(Boolean)
-              .join("\n\n")
-              .trim();
-            let message: Record<string, unknown> | undefined;
-            if (combinedReply) {
-              const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(
-                p.sessionKey,
-              );
-              const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
-              const appended = appendAssistantTranscriptMessage({
-                message: combinedReply,
-                sessionId,
-                storePath: latestStorePath,
-                sessionFile: latestEntry?.sessionFile,
-                createIfMissing: true,
-              });
-              if (appended.ok) {
-                message = appended.message;
-              } else {
-                context.logGateway.warn(
-                  `webchat transcript append failed: ${appended.error ?? "unknown error"}`,
-                );
-                const now = Date.now();
-                message = {
-                  role: "assistant",
-                  content: [{ type: "text", text: combinedReply }],
-                  timestamp: now,
-                  stopReason: "injected",
-                  usage: { input: 0, output: 0, totalTokens: 0 },
-                };
-              }
-            }
-            broadcastChatFinal({
-              context,
-              runId: clientRunId,
-              sessionKey: p.sessionKey,
-              message,
-            });
+      });
+
+      if (isSlashCommand) {
+        void dispatchPromise.then(() => {
+          if (didFinalizeWithoutAgentRun) {
+            return;
           }
+          didFinalizeWithoutAgentRun = true;
+
+          const combinedReply = finalReplyParts
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .join("\n\n")
+            .trim();
+
+          let message: Record<string, unknown> | undefined;
+          if (combinedReply) {
+            const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(
+              p.sessionKey,
+            );
+            const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
+            const appended = appendAssistantTranscriptMessage({
+              message: combinedReply,
+              sessionId,
+              storePath: latestStorePath,
+              sessionFile: latestEntry?.sessionFile,
+              createIfMissing: true,
+            });
+            if (appended.ok) {
+              message = appended.message;
+            } else {
+              context.logGateway.warn(
+                `webchat transcript append failed: ${appended.error ?? "unknown error"}`,
+              );
+              const now = Date.now();
+              message = {
+                role: "assistant",
+                content: [{ type: "text", text: combinedReply }],
+                timestamp: now,
+                stopReason: "injected",
+                usage: { input: 0, output: 0, totalTokens: 0 },
+              };
+            }
+          }
+
+          broadcastChatFinal({
+            context,
+            runId: clientRunId,
+            sessionKey: p.sessionKey,
+            message,
+          });
+
           context.dedupe.set(`chat:${clientRunId}`, {
             ts: Date.now(),
             ok: true,
             payload: {
               runId: clientRunId,
               status: "ok" as const,
-              summary: bestEffortSummary,
+              summary: combinedReply || undefined,
             },
           });
-        })
-        .catch((err) => {
-          context.logGateway.warn(
-            `chat.send failed sessionKey=${p.sessionKey} runId=${clientRunId}: ${formatForLog(err)}`,
-          );
-          const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
-          context.dedupe.set(`chat:${clientRunId}`, {
-            ts: Date.now(),
-            ok: false,
-            payload: {
-              runId: clientRunId,
-              status: "error" as const,
-              summary: String(err),
-            },
-            error,
-          });
-          broadcastChatError({
-            context,
-            runId: clientRunId,
-            sessionKey: p.sessionKey,
-            errorMessage: String(err),
-          });
-        })
-        .finally(() => {
-          context.chatAbortControllers.delete(clientRunId);
 
-          // Best-effort cleanup in case agent lifecycle events never arrive.
-          // (Normally cleaned up by the agent event handler when the run ends.)
+          context.chatAbortControllers.delete(clientRunId);
           context.removeChatRun(sessionIdForRun, clientRunId, p.sessionKey);
         });
+      }
+
+      void dispatchPromise.catch((err) => {
+        if (didFinalizeWithoutAgentRun) {
+          return;
+        }
+        context.logGateway.warn(
+          `chat.send failed sessionKey=${p.sessionKey} runId=${clientRunId}: ${formatForLog(err)}`,
+        );
+        const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
+        const payload = {
+          runId: clientRunId,
+          status: "error" as const,
+          summary: String(err),
+        };
+        context.dedupe.set(`chat:${clientRunId}`, {
+          ts: Date.now(),
+          ok: false,
+          payload,
+          error,
+        });
+        broadcastChatError({
+          context,
+          runId: clientRunId,
+          sessionKey: p.sessionKey,
+          errorMessage: String(err),
+        });
+
+        context.chatAbortControllers.delete(clientRunId);
+        context.removeChatRun(sessionIdForRun, clientRunId, p.sessionKey);
+      });
     } catch (err) {
       context.logGateway.error(
         `chat.send handler crashed sessionKey=${p.sessionKey} runId=${clientRunId}: ${formatForLog(err)}`,

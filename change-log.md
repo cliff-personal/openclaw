@@ -15,7 +15,9 @@ Date: 2026-02-08
 - Control UI Chat: persist the compose draft in localStorage (per sessionKey) so a refresh doesn't wipe unsent text.
 - Gateway/UI: include a best-effort `summary` in `chat.send` completion polling responses so the UI can render something even if `chat` events/transcript lag.
 - Dev tooling: remove the isolated debug gateway (18790) VS Code launch/tasks; keep a single gateway debug target on 18789 using the default environment/config.
-- Gateway: ensure `chat.send` updates the session store and appends the user message to the transcript so `chat.history` doesn't come back empty after `final`.
+- Gateway: ensure `chat.send` updates the session store so `chat.history` resolves the correct session/transcript.
+- Gateway: make `chat.send` polling complete only on agent lifecycle end/error (prevents premature `ok`/empty `final` on slow models).
+- Gateway: avoid duplicate transcript writes when the UI polls `chat.send` with the same `idempotencyKey`.
 
 ## Root cause & fix
 
