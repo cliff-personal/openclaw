@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
@@ -49,6 +50,20 @@ function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+function isZombieDarwin(pid: number): boolean {
+  try {
+    const res = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const stat = typeof res.stdout === "string" ? res.stdout.trim() : "";
+    // 'Z' indicates a zombie (defunct) process on Darwin ps.
+    return stat.includes("Z");
   } catch {
     return false;
   }
@@ -117,6 +132,9 @@ function resolveGatewayOwnerStatus(
   platform: NodeJS.Platform,
 ): LockOwnerStatus {
   if (!isAlive(pid)) {
+    return "dead";
+  }
+  if (platform === "darwin" && isZombieDarwin(pid)) {
     return "dead";
   }
   if (platform !== "linux") {

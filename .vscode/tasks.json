@@ -1,0 +1,44 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "OpenClaw: build (tsdown)",
+      "type": "shell",
+      "command": "corepack pnpm exec tsdown --no-clean",
+      "options": {
+        "cwd": "${workspaceFolder:openclaw}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OpenClaw: ui:build",
+      "type": "shell",
+      "command": "corepack pnpm ui:build",
+      "options": {
+        "cwd": "${workspaceFolder:openclaw}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OpenClaw: config (isolated debug gateway)",
+      "type": "shell",
+      "command": "OPENCLAW_STATE_DIR=\"${env:HOME}/.openclaw-debug\" corepack pnpm openclaw config set gateway.mode local && OPENCLAW_STATE_DIR=\"${env:HOME}/.openclaw-debug\" corepack pnpm openclaw config set gateway.bind loopback && OPENCLAW_STATE_DIR=\"${env:HOME}/.openclaw-debug\" corepack pnpm openclaw config set gateway.port 18790 --json && OPENCLAW_STATE_DIR=\"${env:HOME}/.openclaw-debug\" corepack pnpm openclaw config set gateway.controlUi.enabled true --json && OPENCLAW_STATE_DIR=\"${env:HOME}/.openclaw-debug\" corepack pnpm openclaw config set gateway.controlUi.basePath '\"/openclaw\"' --json && OPENCLAW_STATE_DIR=\"${env:HOME}/.openclaw-debug\" corepack pnpm openclaw config set gateway.controlUi.root '\"${workspaceFolder:openclaw}/dist/control-ui\"' --json",
+      "options": {
+        "cwd": "${workspaceFolder:openclaw}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "OpenClaw: prepare (isolated debug gateway)",
+      "dependsOn": [
+        "OpenClaw: build (tsdown)",
+        "OpenClaw: ui:build",
+        "OpenClaw: config (isolated debug gateway)"
+      ],
+      "dependsOrder": "sequence",
+      "type": "shell",
+      "command": "echo 'OpenClaw isolated debug gateway prepared.'",
+      "problemMatcher": []
+    }
+  ]
+}
