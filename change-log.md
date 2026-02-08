@@ -16,12 +16,10 @@ Date: 2026-02-08
 
 ## Root cause & fix
 
-- Root cause: Control UI relies on `event: "chat"` (`delta/final/error/aborted`) to clear `chatRunId` and render replies. In practice, most chat events are emitted via `nodeSendToSession(sessionKey, "chat", ...)`, which requires the client to subscribe to that session via `node.event` → `chat.subscribe`. Without that subscription, the gateway still returns `status:"started"`, but the UI sees no `event:"chat"` frames and appears unresponsive.
-- Fix: Subscribe the Control UI connection to the active session before sending (`chat.subscribe`), remove the old forced `deliver:false`, and add a best-effort completion watchdog (poll `chat.send` by `idempotencyKey` until `ok/error`, then refresh history + clear busy state). Also clear run state immediately on socket close.
+- Root cause: the Control UI (operator/webchat role) attempted to call `node.event` to subscribe to chat events, but `node.event` is **node-role only** and the gateway correctly rejects it (`unauthorized role: operator`). That meant the subscription never actually happened, and the UI depended on a stream it could not legally subscribe to.
+- Fix: remove the invalid `node.event` subscription calls from the Control UI, and make the gateway reliably emit `event:"chat"` for browser clients by registering the chat run mapping at `chat.send` start (`context.addChatRun(...)`). The UI still keeps the watchdog fallback (poll `chat.send` by `idempotencyKey` and refresh `chat.history`) and clears run state on socket close.
 
 ## Files changed (high level)
 
-- Backend: `src/auto-reply/reply/*`, `src/agents/pi-embedded-helpers/errors.ts`, `src/gateway/*`
-- UI: `ui/src/ui/*`, `ui/src/styles/chat/*`
-- Docs: `docs/concepts/session.md`
-- Dev tooling: `.vscode/launch.json`, `.vscode/tasks.json`
+- Backend: `src/gateway/server-methods/chat.ts`
+- UI: `ui/src/ui/controllers/chat.ts`, `ui/src/ui/app-gateway.ts`
