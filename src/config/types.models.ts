@@ -12,11 +12,16 @@ export type ModelCompatConfig = {
   supportsReasoningEffort?: boolean;
   maxTokensField?: "max_completion_tokens" | "max_tokens";
   /**
-   * For some OpenAI-compatible servers (e.g. local vLLM), tool calling is only
-   * supported via `POST /v1/chat/completions` with `tools` + `tool_choice`.
+   * Local model tool support: declare supported API parameters (e.g. "tools", "tool_choice").
    *
-   * When enabled for an `openai-completions` model, Moltbot routes the agent's
-   * toolset through the SDK tool path so tools are included in the request.
+   * When unset, tool support is assumed (backward compatible with hosted providers).
+   * When set, OpenClaw may disable tools unless "tools" is included.
+   */
+  supportedParameters?: string[];
+
+  /**
+   * Back-compat flag for routing tools through the SDK tool path for some
+   * OpenAI-compatible servers.
    */
   openaiCompletionsTools?: boolean;
 };

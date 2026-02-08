@@ -10,7 +10,7 @@ import { resolveChannelCapabilities } from "../../../config/channel-capabilities
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
-import { isSubagentSessionKey, normalizeAgentId } from "../../../routing/session-key.js";
+import { isSubagentSessionKey } from "../../../routing/session-key.js";
 import { resolveSignalReactionLevel } from "../../../signal/reaction-level.js";
 import { resolveTelegramInlineButtonsScope } from "../../../telegram/inline-buttons.js";
 import { resolveTelegramReactionLevel } from "../../../telegram/reaction-level.js";
@@ -30,6 +30,7 @@ import {
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
+import { modelSupportsTools } from "../../model-compat.js";
 import { resolveDefaultModelForAgent } from "../../model-selection.js";
 import {
   isCloudCodeAssistFormatError,
@@ -205,44 +206,53 @@ export async function runEmbeddedAttempt(
 
     // Check if the model supports native image input
     const modelHasVision = params.model.input?.includes("image") ?? false;
-    const toolsRaw = params.disableTools
-      ? []
-      : createOpenClawCodingTools({
-          exec: {
-            ...params.execOverrides,
-            elevated: params.bashElevated,
-          },
-          sandbox,
-          messageProvider: params.messageChannel ?? params.messageProvider,
-          agentAccountId: params.agentAccountId,
-          messageTo: params.messageTo,
-          messageThreadId: params.messageThreadId,
-          groupId: params.groupId,
-          groupChannel: params.groupChannel,
-          groupSpace: params.groupSpace,
-          spawnedBy: params.spawnedBy,
-          senderId: params.senderId,
-          senderName: params.senderName,
-          senderUsername: params.senderUsername,
-          senderE164: params.senderE164,
-          senderIsOwner: params.senderIsOwner,
-          sessionKey: params.sessionKey ?? params.sessionId,
-          agentDir,
-          workspaceDir: effectiveWorkspace,
-          config: params.config,
-          abortSignal: runAbortController.signal,
-          modelProvider: params.model.provider,
-          modelId: params.modelId,
-          modelAuthMode: resolveModelAuthMode(params.model.provider, params.config),
-          currentChannelId: params.currentChannelId,
-          currentThreadTs: params.currentThreadTs,
-          replyToMode: params.replyToMode,
-          hasRepliedRef: params.hasRepliedRef,
-          modelHasVision,
-          requireExplicitMessageTarget:
-            params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
-          disableMessageTool: params.disableMessageTool,
-        });
+
+    const modelHasToolSupport = modelSupportsTools(params.model);
+    if (!modelHasToolSupport) {
+      log.debug(
+        `Tools disabled for model ${params.modelId}: compat.supportedParameters does not include "tools"`,
+      );
+    }
+
+    const toolsRaw =
+      params.disableTools || !modelHasToolSupport
+        ? []
+        : createOpenClawCodingTools({
+            exec: {
+              ...params.execOverrides,
+              elevated: params.bashElevated,
+            },
+            sandbox,
+            messageProvider: params.messageChannel ?? params.messageProvider,
+            agentAccountId: params.agentAccountId,
+            messageTo: params.messageTo,
+            messageThreadId: params.messageThreadId,
+            groupId: params.groupId,
+            groupChannel: params.groupChannel,
+            groupSpace: params.groupSpace,
+            spawnedBy: params.spawnedBy,
+            senderId: params.senderId,
+            senderName: params.senderName,
+            senderUsername: params.senderUsername,
+            senderE164: params.senderE164,
+            senderIsOwner: params.senderIsOwner,
+            sessionKey: params.sessionKey ?? params.sessionId,
+            agentDir,
+            workspaceDir: effectiveWorkspace,
+            config: params.config,
+            abortSignal: runAbortController.signal,
+            modelProvider: params.model.provider,
+            modelId: params.modelId,
+            modelAuthMode: resolveModelAuthMode(params.model.provider, params.config),
+            currentChannelId: params.currentChannelId,
+            currentThreadTs: params.currentThreadTs,
+            replyToMode: params.replyToMode,
+            hasRepliedRef: params.hasRepliedRef,
+            modelHasVision,
+            requireExplicitMessageTarget:
+              params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
+            disableMessageTool: params.disableMessageTool,
+          });
     const tools = sanitizeToolsForGoogle({ tools: toolsRaw, provider: params.provider });
     logToolSchemasForGoogle({ tools, provider: params.provider });
 
@@ -712,13 +722,7 @@ export async function runEmbeddedAttempt(
 
       // Get hook runner once for both before_agent_start and agent_end hooks
       const hookRunner = getGlobalHookRunner();
-      const hookAgentId =
-        typeof params.agentId === "string" && params.agentId.trim()
-          ? normalizeAgentId(params.agentId)
-          : resolveSessionAgentIds({
-              sessionKey: params.sessionKey,
-              config: params.config,
-            }).sessionAgentId;
+      const hookAgentId = params.sessionKey?.split(":")[0] ?? "main";
 
       let promptError: unknown = null;
       try {

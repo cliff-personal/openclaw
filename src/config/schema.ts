@@ -471,7 +471,8 @@ const FIELD_HELP: Record<string, string> = {
     'Text suffix for cross-context markers (supports "{channel}").',
   "tools.message.broadcast.enabled": "Enable broadcast action (default: true).",
   "tools.web.search.enabled": "Enable the web_search tool (requires a provider API key).",
-  "tools.web.search.provider": 'Search provider ("brave" or "perplexity").',
+  "tools.web.search.provider":
+    'Search provider ("brave", "perplexity", or "duckduckgo"). DuckDuckGo is free and requires no API key.',
   "tools.web.search.apiKey": "Brave Search API key (fallback: BRAVE_API_KEY env var).",
   "tools.web.search.maxResults": "Default number of results to return (1-10).",
   "tools.web.search.timeoutSeconds": "Timeout in seconds for web_search requests.",
@@ -562,7 +563,7 @@ const FIELD_HELP: Record<string, string> = {
   "agents.defaults.memorySearch.local.modelPath":
     "Local GGUF model path or hf: URI (node-llama-cpp).",
   "agents.defaults.memorySearch.fallback":
-    'Fallback provider when embeddings fail ("openai", "gemini", "local", or "none").',
+    'Fallback provider when embeddings fail ("openai", "gemini", "voyage", "local", or "none").',
   "agents.defaults.memorySearch.store.path":
     "SQLite index path (default: ~/.openclaw/memory/{agentId}.sqlite).",
   "agents.defaults.memorySearch.store.vector.enabled":
