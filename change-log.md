@@ -1,9 +1,10 @@
 # Change Log
 
-Date: 2026-02-08
+Date: 2026-02-09
 
 ## Summary
 
+- Gateway: recover from local model context overflow by automatically rolling over to a new session (creates new session file, injects handoff system prompt, and retries user message).
 - Gateway: recover from local model context overflow by rolling over to a new session (inject a compact handoff + retry once).
 - Docs: add a dedicated context overflow page (causes, recovery behavior, and mitigation steps).
 - Gateway: broaden context overflow detection to cover more provider error strings.

@@ -50,6 +50,7 @@ import { compactEmbeddedPiSessionDirect } from "./compact.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { resolveModel } from "./model.js";
+import { performSessionRollover } from "./rollover.js";
 import { runEmbeddedAttempt } from "./run/attempt.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
 import { describeUnknownError } from "./utils.js";
@@ -180,6 +181,9 @@ export async function runEmbeddedPiAgent(
           ? profileOrder
           : [undefined];
       let profileIndex = 0;
+      let currentSessionId = params.sessionId;
+      let currentSessionFile = params.sessionFile;
+      let currentExtraSystemPrompt = params.extraSystemPrompt;
 
       const initialThinkLevel = params.thinkLevel ?? "off";
       let thinkLevel = initialThinkLevel;
@@ -330,7 +334,7 @@ export async function runEmbeddedPiAgent(
             provider === "anthropic" ? scrubAnthropicRefusalMagic(params.prompt) : params.prompt;
 
           const attempt = await runEmbeddedAttempt({
-            sessionId: params.sessionId,
+            sessionId: currentSessionId,
             sessionKey: params.sessionKey,
             messageChannel: params.messageChannel,
             messageProvider: params.messageProvider,
@@ -346,7 +350,7 @@ export async function runEmbeddedPiAgent(
             currentThreadTs: params.currentThreadTs,
             replyToMode: params.replyToMode,
             hasRepliedRef: params.hasRepliedRef,
-            sessionFile: params.sessionFile,
+            sessionFile: currentSessionFile,
             workspaceDir: resolvedWorkspace,
             agentDir,
             config: params.config,
@@ -380,7 +384,7 @@ export async function runEmbeddedPiAgent(
             onReasoningStream: params.onReasoningStream,
             onToolResult: params.onToolResult,
             onAgentEvent: params.onAgentEvent,
-            extraSystemPrompt: params.extraSystemPrompt,
+            extraSystemPrompt: currentExtraSystemPrompt,
             streamParams: params.streamParams,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
@@ -437,6 +441,46 @@ export async function runEmbeddedPiAgent(
                   `auto-compaction failed for ${provider}/${modelId}: ${compactResult.reason ?? "nothing to compact"}`,
                 );
               }
+
+              if (!isCompactionFailure) {
+                log.info(
+                  `[rollover] Context overflow -> attempting session rollover for ${provider}/${modelId}`,
+                );
+                const rollover = await performSessionRollover({
+                  sessionId: currentSessionId,
+                  sessionKey: params.sessionKey,
+                  messageChannel: params.messageChannel,
+                  messageProvider: params.messageProvider,
+                  agentAccountId: params.agentAccountId,
+                  authProfileId: lastProfileId,
+                  sessionFile: currentSessionFile,
+                  workspaceDir: resolvedWorkspace,
+                  agentDir,
+                  config: params.config,
+                  skillsSnapshot: params.skillsSnapshot,
+                  senderIsOwner: params.senderIsOwner,
+                  provider,
+                  model: modelId,
+                  priorSessionId: currentSessionId,
+                  originalPrompt: prompt,
+                });
+
+                if (rollover.ok && rollover.newSessionId && rollover.newSessionFile) {
+                  currentSessionId = rollover.newSessionId;
+                  currentSessionFile = rollover.newSessionFile;
+
+                  const handoffMsg = `[System: Session Rollover]\nPrevious session context limit reached. Continuing in new session ${rollover.newSessionId}.`;
+                  currentExtraSystemPrompt = currentExtraSystemPrompt
+                    ? `${currentExtraSystemPrompt}\n\n${handoffMsg}`
+                    : handoffMsg;
+
+                  log.info(`[rollover] Success: ${currentSessionId}`);
+                  overflowCompactionAttempts = 0;
+                  continue;
+                }
+                log.warn(`[rollover] Failed: ${rollover.reason}`);
+              }
+
               const kind = isCompactionFailure ? "compaction_failure" : "context_overflow";
               return {
                 payloads: [
