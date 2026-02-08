@@ -608,6 +608,67 @@ export async function runEmbeddedPiAgent(
             continue;
           }
 
+          // Check for overflow in both structured error message and text content
+          // (some providers return errors as plain text responses)
+          const lastAssistantText =
+            typeof lastAssistant?.content === "string"
+              ? lastAssistant.content
+              : Array.isArray(lastAssistant?.content)
+                ? lastAssistant.content
+                    .filter((c) => c && c.type === "text" && typeof c.text === "string")
+                    .map((c) => c.text)
+                    .join("\n")
+                : "";
+
+          const overflowErrorText =
+            (lastAssistant?.errorMessage && isContextOverflowError(lastAssistant.errorMessage)
+              ? lastAssistant.errorMessage
+              : null) ||
+            (lastAssistantText && isContextOverflowError(lastAssistantText)
+              ? lastAssistantText
+              : null);
+
+          if (overflowErrorText && !aborted) {
+            if (!isCompactionFailureError(overflowErrorText)) {
+              log.info(
+                `[rollover] Context overflow (via result) -> attempting session rollover for ${provider}/${modelId}`,
+              );
+              const rollover = await performSessionRollover({
+                sessionId: currentSessionId,
+                sessionKey: params.sessionKey,
+                messageChannel: params.messageChannel,
+                messageProvider: params.messageProvider,
+                agentAccountId: params.agentAccountId,
+                authProfileId: lastProfileId,
+                sessionFile: currentSessionFile,
+                workspaceDir: resolvedWorkspace,
+                agentDir,
+                config: params.config,
+                skillsSnapshot: params.skillsSnapshot,
+                senderIsOwner: params.senderIsOwner,
+                provider,
+                model: modelId,
+                priorSessionId: currentSessionId,
+                originalPrompt: prompt,
+              });
+
+              if (rollover.ok && rollover.newSessionId && rollover.newSessionFile) {
+                currentSessionId = rollover.newSessionId;
+                currentSessionFile = rollover.newSessionFile;
+
+                const handoffMsg = `[System: Session Rollover]\nPrevious session context limit reached. Continuing in new session ${rollover.newSessionId}.`;
+                currentExtraSystemPrompt = currentExtraSystemPrompt
+                  ? `${currentExtraSystemPrompt}\n\n${handoffMsg}`
+                  : handoffMsg;
+
+                log.info(`[rollover] Success: ${currentSessionId}`);
+                overflowCompactionAttempts = 0;
+                continue;
+              }
+              log.warn(`[rollover] Failed: ${rollover.reason}`);
+            }
+          }
+
           const authFailure = isAuthAssistantError(lastAssistant);
           const rateLimitFailure = isRateLimitAssistantError(lastAssistant);
           const billingFailure = isBillingAssistantError(lastAssistant);

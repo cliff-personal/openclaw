@@ -4,6 +4,8 @@ Date: 2026-02-09
 
 ## Summary
 
+- Gateway: Enhanced context overflow detection to handle cases where models return error messages as plain text content (fixes rollover trigger for `llama-server`).
+- Control UI: Fixed a bug causing duplicate chat requests by removing aggressive status polling loop.
 - Gateway: recover from local model context overflow by automatically rolling over to a new session (creates new session file, injects handoff system prompt, and retries user message).
 - Gateway: recover from local model context overflow by rolling over to a new session (inject a compact handoff + retry once).
 - Docs: add a dedicated context overflow page (causes, recovery behavior, and mitigation steps).

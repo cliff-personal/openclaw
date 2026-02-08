@@ -339,16 +339,6 @@ export async function sendChatMessage(
       state.chatRunExpiresAtMs = res.expiresAtMs;
     }
 
-    // If the gateway doesn't emit chat events (or the connection drops mid-run),
-    // poll for completion so the UI can recover instead of staying stuck.
-    void pollChatRunStatus({
-      state,
-      runId,
-      sessionKey: state.sessionKey,
-      message: msg,
-      attachments: apiAttachments,
-    });
-
     return runId;
   } catch (err) {
     const error = String(err);
