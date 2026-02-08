@@ -38,6 +38,7 @@
       "args": ["gateway", "--port", "18790", "--verbose"],
       "env": {
         "OPENCLAW_STATE_DIR": "${env:HOME}/.openclaw-debug",
+        "OPENCLAW_CONFIG_PATH": "${env:HOME}/.openclaw-debug/openclaw.json",
         "CLAWDBOT_DEBUG_TOOLS": "1"
       },
       "runtimeArgs": ["--enable-source-maps", "--trace-warnings"],

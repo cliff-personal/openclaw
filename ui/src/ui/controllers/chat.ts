@@ -3,6 +3,68 @@ import type { ChatAttachment } from "../ui-types.ts";
 import { extractText } from "../chat/message-extract.ts";
 import { generateUUID } from "../uuid.ts";
 
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollChatRunStatus(params: {
+  state: ChatState;
+  runId: string;
+  sessionKey: string;
+  message: string;
+  attachments?: unknown;
+}) {
+  const { state, runId, sessionKey, message, attachments } = params;
+  if (!state.client) {
+    return;
+  }
+
+  // Give the event stream a chance to deliver deltas/final first.
+  await sleep(400);
+
+  const startedAt = Date.now();
+  const maxMs = 120_000;
+  while (
+    state.client &&
+    state.connected &&
+    state.chatRunId === runId &&
+    Date.now() - startedAt < maxMs
+  ) {
+    try {
+      const res = await state.client.request<{ runId?: string; status?: string; summary?: string }>(
+        "chat.send",
+        {
+          sessionKey,
+          message,
+          idempotencyKey: runId,
+          attachments,
+          timeoutMs: 30_000,
+        },
+      );
+
+      if (res?.status === "ok") {
+        await loadChatHistory(state);
+        state.chatRunId = null;
+        state.chatStream = null;
+        state.chatStreamStartedAt = null;
+        return;
+      }
+
+      if (res?.status === "error") {
+        state.chatRunId = null;
+        state.chatStream = null;
+        state.chatStreamStartedAt = null;
+        state.lastError = res?.summary ?? "chat error";
+        return;
+      }
+    } catch {
+      // Best-effort; keep polling until timeout or disconnect.
+    }
+
+    await sleep(750);
+  }
+}
+
 export type ChatState = {
   client: GatewayBrowserClient | null;
   connected: boolean;
@@ -166,10 +228,20 @@ export async function sendChatMessage(
     await state.client.request("chat.send", {
       sessionKey: state.sessionKey,
       message: msg,
-      deliver: false,
       idempotencyKey: runId,
       attachments: apiAttachments,
     });
+
+    // If the gateway doesn't emit chat events (or the connection drops mid-run),
+    // poll for completion so the UI can recover instead of staying stuck.
+    void pollChatRunStatus({
+      state,
+      runId,
+      sessionKey: state.sessionKey,
+      message: msg,
+      attachments: apiAttachments,
+    });
+
     return runId;
   } catch (err) {
     const error = String(err);
