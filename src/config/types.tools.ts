@@ -1,9 +1,9 @@
-import type { NormalizedChatType } from "../channels/chat-type.js";
+import type { ChatType } from "../channels/chat-type.js";
 import type { AgentElevatedAllowFromConfig, SessionSendPolicyAction } from "./types.base.js";
 
 export type MediaUnderstandingScopeMatch = {
   channel?: string;
-  chatType?: NormalizedChatType;
+  chatType?: ChatType;
   keyPrefix?: string;
 };
 
@@ -336,8 +336,13 @@ export type ToolsConfig = {
     search?: {
       /** Enable web search tool (default: true when API key is present). */
       enabled?: boolean;
+<<<<<<< HEAD
       /** Search provider ("brave", "perplexity", or "duckduckgo"). DuckDuckGo is free and requires no API key. */
       provider?: "brave" | "perplexity" | "duckduckgo" | "ddg";
+=======
+      /** Search provider ("brave", "perplexity", or "grok"). */
+      provider?: "brave" | "perplexity" | "grok";
+>>>>>>> main
       /** Brave Search API key (optional; defaults to BRAVE_API_KEY env var). */
       apiKey?: string;
       /** Default search results count (1-10). */
@@ -354,6 +359,15 @@ export type ToolsConfig = {
         baseUrl?: string;
         /** Model to use (defaults to "perplexity/sonar-pro"). */
         model?: string;
+      };
+      /** Grok-specific configuration (used when provider="grok"). */
+      grok?: {
+        /** API key for xAI (defaults to XAI_API_KEY env var). */
+        apiKey?: string;
+        /** Model to use (defaults to "grok-4-1-fast"). */
+        model?: string;
+        /** Include inline citations in response text as markdown links (default: false). */
+        inlineCitations?: boolean;
       };
     };
     fetch?: {

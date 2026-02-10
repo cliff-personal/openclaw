@@ -26,7 +26,7 @@ export function isContextOverflowError(errorMessage?: string): boolean {
     lower.includes("available context size") ||
     lower.includes("exceeds model context window") ||
     (hasRequestSizeExceeds && hasContextWindow) ||
-    lower.includes("context overflow") ||
+    lower.includes("context overflow:") ||
     (lower.includes("413") && lower.includes("too large"))
   );
 }
@@ -52,16 +52,18 @@ export function isCompactionFailureError(errorMessage?: string): boolean {
   if (!errorMessage) {
     return false;
   }
-  if (!isContextOverflowError(errorMessage)) {
-    return false;
-  }
   const lower = errorMessage.toLowerCase();
-  return (
+  const hasCompactionTerm =
     lower.includes("summarization failed") ||
     lower.includes("auto-compaction") ||
     lower.includes("compaction failed") ||
-    lower.includes("compaction")
-  );
+    lower.includes("compaction");
+  if (!hasCompactionTerm) {
+    return false;
+  }
+  // For compaction failures, also accept "context overflow" without colon
+  // since the error message itself describes a compaction/summarization failure
+  return isContextOverflowError(errorMessage) || lower.includes("context overflow");
 }
 
 const ERROR_PAYLOAD_PREFIX_RE =
@@ -69,6 +71,8 @@ const ERROR_PAYLOAD_PREFIX_RE =
 const FINAL_TAG_RE = /<\s*\/?\s*final\s*>/gi;
 const ERROR_PREFIX_RE =
   /^(?:error|api\s*error|openai\s*error|anthropic\s*error|gateway\s*error|request failed|failed|exception)[:\s-]+/i;
+const CONTEXT_OVERFLOW_ERROR_HEAD_RE =
+  /^(?:context overflow:|request_too_large\b|request size exceeds\b|request exceeds the maximum size\b|context length exceeded\b|maximum context length\b|prompt is too long\b|exceeds model context window\b)/i;
 const HTTP_STATUS_PREFIX_RE = /^(?:http\s*)?(\d{3})\s+(.+)$/i;
 const HTTP_ERROR_HINTS = [
   "error",
@@ -135,6 +139,18 @@ function isLikelyHttpErrorText(raw: string): boolean {
   }
   const message = match[2].toLowerCase();
   return HTTP_ERROR_HINTS.some((hint) => message.includes(hint));
+}
+
+function shouldRewriteContextOverflowText(raw: string): boolean {
+  if (!isContextOverflowError(raw)) {
+    return false;
+  }
+  return (
+    isRawApiErrorPayload(raw) ||
+    isLikelyHttpErrorText(raw) ||
+    ERROR_PREFIX_RE.test(raw) ||
+    CONTEXT_OVERFLOW_ERROR_HEAD_RE.test(raw)
+  );
 }
 
 type ErrorPayload = Record<string, unknown>;
@@ -405,7 +421,7 @@ export function sanitizeUserFacingText(text: string): string {
     );
   }
 
-  if (isContextOverflowError(trimmed)) {
+  if (shouldRewriteContextOverflowText(trimmed)) {
     return (
       "Context overflow: prompt too large for the model. " +
       "Try again with less input or a larger-context model."
