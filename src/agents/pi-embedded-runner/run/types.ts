@@ -89,6 +89,7 @@ export type EmbeddedRunAttemptParams = {
   streamParams?: AgentStreamParams;
   ownerNumbers?: string[];
   enforceFinalTag?: boolean;
+  ignoreContextFiles?: boolean;
 };
 
 export type EmbeddedRunAttemptResult = {

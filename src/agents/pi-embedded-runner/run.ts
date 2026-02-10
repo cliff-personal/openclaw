@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import type { EmbeddedPiAgentMeta, EmbeddedPiRunResult } from "./types.js";
+import { updateSessionStoreEntry } from "../../config/sessions.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
@@ -184,6 +186,9 @@ export async function runEmbeddedPiAgent(
       let currentSessionId = params.sessionId;
       let currentSessionFile = params.sessionFile;
       let currentExtraSystemPrompt = params.extraSystemPrompt;
+      let ignoreContextFiles = false;
+      let currentDisableTools = params.disableTools ?? false;
+      let currentSkillsSnapshot = params.skillsSnapshot;
 
       const initialThinkLevel = params.thinkLevel ?? "off";
       let thinkLevel = initialThinkLevel;
@@ -354,10 +359,10 @@ export async function runEmbeddedPiAgent(
             workspaceDir: resolvedWorkspace,
             agentDir,
             config: params.config,
-            skillsSnapshot: params.skillsSnapshot,
+            skillsSnapshot: currentSkillsSnapshot,
             prompt,
             images: params.images,
-            disableTools: params.disableTools,
+            disableTools: currentDisableTools,
             provider,
             modelId,
             model,
@@ -385,6 +390,7 @@ export async function runEmbeddedPiAgent(
             onToolResult: params.onToolResult,
             onAgentEvent: params.onAgentEvent,
             extraSystemPrompt: currentExtraSystemPrompt,
+            ignoreContextFiles,
             streamParams: params.streamParams,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
@@ -395,10 +401,28 @@ export async function runEmbeddedPiAgent(
           if (promptError && !aborted) {
             const errorText = describeUnknownError(promptError);
             if (isContextOverflowError(errorText)) {
-              const msgCount = attempt.messagesSnapshot?.length ?? 0;
+              // Tier 1: Drop context files
+              if (!ignoreContextFiles) {
+                log.warn(
+                  `[context-overflow] Overflow detected. Tier 1: Dropping context files for retry.`,
+                );
+                ignoreContextFiles = true;
+                continue;
+              }
+
+              // Tier 2: Disable tools and skills
+              if (!currentDisableTools) {
+                log.warn(
+                  `[context-overflow] Overflow detected. Tier 2: Disabling tools and skills for retry.`,
+                );
+                currentDisableTools = true;
+                currentSkillsSnapshot = undefined;
+                continue;
+              }
+
               log.warn(
                 `[context-overflow-diag] sessionKey=${params.sessionKey ?? params.sessionId} ` +
-                  `provider=${provider}/${modelId} messages=${msgCount} ` +
+                  `provider=${provider}/${modelId} ` +
                   `sessionFile=${params.sessionFile} compactionAttempts=${overflowCompactionAttempts} ` +
                   `error=${errorText.slice(0, 200)}`,
               );
@@ -462,7 +486,6 @@ export async function runEmbeddedPiAgent(
                   provider,
                   model: modelId,
                   priorSessionId: currentSessionId,
-                  originalPrompt: prompt,
                 });
 
                 if (rollover.ok && rollover.newSessionId && rollover.newSessionFile) {
@@ -608,28 +631,12 @@ export async function runEmbeddedPiAgent(
             continue;
           }
 
-          // Check for overflow in both structured error message and text content
-          // (some providers return errors as plain text responses)
-          const lastAssistantText =
-            typeof lastAssistant?.content === "string"
-              ? lastAssistant.content
-              : Array.isArray(lastAssistant?.content)
-                ? lastAssistant.content
-                    .filter((c) => c && c.type === "text" && typeof c.text === "string")
-                    .map((c) => c.text)
-                    .join("\n")
-                : "";
-
-          const overflowErrorText =
-            (lastAssistant?.errorMessage && isContextOverflowError(lastAssistant.errorMessage)
-              ? lastAssistant.errorMessage
-              : null) ||
-            (lastAssistantText && isContextOverflowError(lastAssistantText)
-              ? lastAssistantText
-              : null);
-
-          if (overflowErrorText && !aborted) {
-            if (!isCompactionFailureError(overflowErrorText)) {
+          if (
+            lastAssistant?.errorMessage &&
+            isContextOverflowError(lastAssistant.errorMessage) &&
+            !aborted
+          ) {
+            if (!isCompactionFailureError(lastAssistant.errorMessage)) {
               log.info(
                 `[rollover] Context overflow (via result) -> attempting session rollover for ${provider}/${modelId}`,
               );
@@ -649,7 +656,6 @@ export async function runEmbeddedPiAgent(
                 provider,
                 model: modelId,
                 priorSessionId: currentSessionId,
-                originalPrompt: prompt,
               });
 
               if (rollover.ok && rollover.newSessionId && rollover.newSessionFile) {
@@ -660,6 +666,23 @@ export async function runEmbeddedPiAgent(
                 currentExtraSystemPrompt = currentExtraSystemPrompt
                   ? `${currentExtraSystemPrompt}\n\n${handoffMsg}`
                   : handoffMsg;
+
+                if (params.sessionKey) {
+                  try {
+                    await updateSessionStoreEntry({
+                      storePath: path.join(agentDir, "sessions", "sessions.json"),
+                      sessionKey: params.sessionKey,
+                      update: async () => ({
+                        sessionId: rollover.newSessionId,
+                      }),
+                    });
+                    log.info(
+                      `[rollover] Updated session store for ${params.sessionKey} -> ${rollover.newSessionId}`,
+                    );
+                  } catch (err) {
+                    log.error(`[rollover] Failed to update session store: ${err}`);
+                  }
+                }
 
                 log.info(`[rollover] Success: ${currentSessionId}`);
                 overflowCompactionAttempts = 0;
@@ -783,8 +806,13 @@ export async function runEmbeddedPiAgent(
           });
 
           log.debug(
-            `embedded run done: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - started} aborted=${aborted}`,
+            `embedded run done: runId=${params.runId} sessionId=${sessionIdUsed} durationMs=${Date.now() - started} aborted=${aborted}`,
           );
+          if (sessionIdUsed !== params.sessionId) {
+            log.info(
+              `[rollover] session switched during run: ${params.sessionId} -> ${sessionIdUsed}`,
+            );
+          }
           if (lastProfileId) {
             await markAuthProfileGood({
               store: authStore,
