@@ -1,5 +1,25 @@
 # Change Log
 
+Date: 2026-02-10
+
+## Summary
+
+- Docs: Add GitHub Copilot example model `github-copilot/gpt-5-mini` to provider docs and to the model providers overview so it's discoverable in examples and onboarding.
+- Docs: Update `docs/providers/github-copilot.md` default-model example to `github-copilot/gpt-5-mini` and expand notes about alternate Copilot model IDs.
+- Models/config: Documented local llama-server/provider context increase (16k → 32k) and corresponding `models.providers.llama-local.contextWindow` update used to avoid context overflow on large requests.
+
+## Details
+
+- `docs/providers/github-copilot.md`: set example default model to `github-copilot/gpt-5-mini` and clarified notes about model availability and alternatives.
+- `docs/concepts/model-providers.md`: added `github-copilot/gpt-5-mini` as an example model under the built-in providers section.
+- Local model notes: increased local llama-server context to 32768 and updated OpenClaw provider config to match; this mitigates 16k context overflow errors seen with large requests.
+
+## Files changed (this entry)
+
+- Docs: `docs/providers/github-copilot.md`
+- Docs: `docs/concepts/model-providers.md`
+- Changelog: `change-log.md`
+
 Date: 2026-02-09
 
 ## Summary
